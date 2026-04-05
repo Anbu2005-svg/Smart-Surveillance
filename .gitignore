@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+ENV/
+env/
+newvenv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+temp_frames/
+output_frames/
+*.log
+
+# Environment variables
+.env
+.env.local
+**/.env
+**/.env.*
+!**/.env.example
+!.env.example
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Models (optional)
+*.onnx
+*.pt
+yolov8*.pt
+
+# Node modules (frontend)
+node_modules/
+surveillance-frontend/node_modules/
+surveillance-frontend/dist/
+
+# Local runtime/data folders
+uploaded_videos/
+new.venv/
+CCTV/newvenv/
+
+# Misc
+.cache/
+*.tmp

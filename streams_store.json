@@ -1,0 +1,12 @@
+[
+  {
+    "id": "stream_1",
+    "name": "Front Door Camera",
+    "source": "0"
+  },
+  {
+    "id": "stream_2",
+    "name": "bedroom",
+    "source": "0"
+  }
+]

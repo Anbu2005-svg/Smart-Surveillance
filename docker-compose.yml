@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5000
+      - DEVICE=cpu
+      - CONFIDENCE_THRESHOLD=0.5
+    volumes:
+      - ./temp_frames:/app/temp_frames
+      - ./output_frames:/app/output_frames
+    networks:
+      - cctv-network
+
+  frontend:
+    build: ./surveillance-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://backend:5000/api
+    depends_on:
+      - backend
+    networks:
+      - cctv-network
+
+networks:
+  cctv-network:
+    driver: bridge
