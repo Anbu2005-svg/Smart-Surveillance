@@ -9,7 +9,7 @@ type AuthMode = 'login' | 'signup';
 export const AuthPage: React.FC = () => {
   const { signIn, signInWithGoogle, signUp, loading, error } = useAuth();
   const navigate = useNavigate();
-  
+
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -98,18 +98,12 @@ export const AuthPage: React.FC = () => {
       errorText.includes('password'));
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-800 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
-        {/* Logo and Header */}
-        <div className="text-center mb-8">
+    <div className="min-h-screen auth-bg flex items-center justify-center px-4 py-8">
+      <div className="max-w-[430px] w-full">
+        <div className="text-center mb-7">
           <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-2 rounded-xl bg-slate-900 border border-cyan-500/40 shadow-[0_0_24px_rgba(34,211,238,0.2)]">
-              <svg
-                className="w-9 h-9"
-                viewBox="0 0 64 64"
-                aria-hidden="true"
-                focusable="false"
-              >
+            <div className="p-2 rounded-xl bg-slate-900/95 auth-brand-icon">
+              <svg className="w-9 h-9" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
                 <defs>
                   <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stopColor="#22d3ee" />
@@ -126,21 +120,17 @@ export const AuthPage: React.FC = () => {
                 <path d="M16 44c4-6 10-9 16-9s12 3 16 9" stroke="#e2e8f0" strokeWidth="3" fill="none" strokeLinecap="round" />
               </svg>
             </div>
-            <h1 className="text-3xl font-bold text-white">Smart Surveillance</h1>
+            <h1 className="text-[38px] leading-none font-extrabold text-white tracking-tight">Smart Surveillance</h1>
           </div>
-          <p className="text-gray-400 mt-2">Real-time object detection system</p>
+          <p className="text-slate-300 text-sm mt-2">Real-time object detection system</p>
         </div>
 
-        {/* Auth Card */}
-        <div className="bg-gray-800 rounded-lg shadow-xl overflow-hidden border border-gray-700 transition-all duration-300 ease-out">
-          {/* Tabs */}
-          <div className="flex border-b border-gray-700">
+        <div className="auth-card rounded-lg overflow-hidden transition-all duration-300 ease-out">
+          <div className="flex border-b border-slate-600/45 bg-slate-700/60">
             <button
               onClick={() => setMode('login')}
               className={`flex-1 py-3 px-4 font-semibold transition-all duration-200 ease-out ${
-                mode === 'login'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                mode === 'login' ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-600/70'
               }`}
             >
               <LogIn className="w-4 h-4 inline mr-2" />
@@ -149,9 +139,7 @@ export const AuthPage: React.FC = () => {
             <button
               onClick={() => setMode('signup')}
               className={`flex-1 py-3 px-4 font-semibold transition-all duration-200 ease-out ${
-                mode === 'signup'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                mode === 'signup' ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-600/70'
               }`}
             >
               <UserPlus className="w-4 h-4 inline mr-2" />
@@ -159,96 +147,78 @@ export const AuthPage: React.FC = () => {
             </button>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            {/* Error Message */}
+          <form onSubmit={handleSubmit} className="p-5 space-y-4 bg-slate-900/10">
             {(localError || error) && (
-              <div className="bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded flex gap-2">
+              <div className="bg-rose-950/75 border border-rose-700 text-rose-100 px-4 py-3 rounded flex gap-2">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <span className="text-sm">{localError || error}</span>
               </div>
             )}
             {resetNotice && (
-              <div className="bg-emerald-900 border border-emerald-700 text-emerald-100 px-4 py-3 rounded">
+              <div className="bg-emerald-950/70 border border-emerald-700 text-emerald-100 px-4 py-3 rounded">
                 <p className="text-sm">{resetNotice}</p>
               </div>
             )}
-
-            {/* Success Message */}
             {success && (
-              <div className="bg-green-900 border border-green-700 text-green-100 px-4 py-3 rounded">
+              <div className="bg-green-950/70 border border-green-700 text-green-100 px-4 py-3 rounded">
                 <p className="text-sm">
-                  {mode === 'login' 
-                    ? 'Login successful! Redirecting...' 
-                    : 'Account created! Redirecting to login...'}
+                  {mode === 'login' ? 'Login successful! Redirecting...' : 'Account created! Redirecting to login...'}
                 </p>
               </div>
             )}
 
-            {/* Full Name (Sign Up Only) */}
             {mode === 'signup' && (
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Full Name
-                </label>
+                <label className="block text-sm font-medium text-slate-200 mb-2">Full Name</label>
                 <input
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="John Doe"
-                  className="w-full bg-gray-700 text-white px-4 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none transition"
+                  className="w-full bg-slate-600/55 text-white px-4 py-2 rounded border border-slate-500/70 focus:border-blue-400 outline-none transition placeholder:text-slate-300/80"
                   disabled={loading}
                 />
               </div>
             )}
 
-            {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Email Address
-              </label>
+              <label className="block text-sm font-medium text-slate-200 mb-2">Email Address</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                className="w-full bg-gray-700 text-white px-4 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none transition"
+                className="w-full bg-slate-600/55 text-white px-4 py-2 rounded border border-slate-500/70 focus:border-blue-400 outline-none transition placeholder:text-slate-300/80"
                 disabled={loading}
               />
             </div>
 
-            {/* Password */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Password
-              </label>
+              <label className="block text-sm font-medium text-slate-200 mb-2">Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-gray-700 text-white px-4 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none transition"
+                placeholder="********"
+                className="w-full bg-slate-600/55 text-white px-4 py-2 rounded border border-slate-500/70 focus:border-blue-400 outline-none transition placeholder:text-slate-300/80"
                 disabled={loading}
               />
-              {mode === 'signup' && (
-                <p className="text-xs text-gray-400 mt-1">At least 6 characters</p>
-              )}
+              {mode === 'signup' && <p className="text-xs text-slate-300 mt-1">At least 6 characters</p>}
               {showForgotButton && (
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="mt-2 text-xs text-blue-300 hover:text-blue-200 underline underline-offset-2 transition"
+                  className="mt-2 text-xs text-cyan-300 hover:text-cyan-200 underline underline-offset-2 transition"
                 >
                   Forgot password? Send reset link
                 </button>
               )}
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-semibold py-2 px-4 rounded transition-all duration-200 ease-out active:scale-[0.99] flex items-center justify-center gap-2"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white font-semibold py-2 px-4 rounded transition-all duration-200 ease-out active:scale-[0.99] flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -262,10 +232,10 @@ export const AuthPage: React.FC = () => {
 
             <div className="relative py-1">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-600"></div>
+                <div className="w-full border-t border-slate-600"></div>
               </div>
               <div className="relative flex justify-center text-xs">
-                <span className="bg-gray-800 px-2 text-gray-400">OR</span>
+                <span className="bg-transparent px-2 text-slate-400">OR</span>
               </div>
             </div>
 
@@ -273,7 +243,7 @@ export const AuthPage: React.FC = () => {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={loading}
-              className="w-full bg-white hover:bg-gray-100 disabled:bg-gray-300 text-gray-900 font-semibold py-2 px-4 rounded transition-all duration-200 ease-out active:scale-[0.99] flex items-center justify-center gap-2"
+              className="w-full bg-white hover:bg-slate-100 disabled:bg-slate-300 text-slate-900 font-semibold py-2 px-4 rounded transition-all duration-200 ease-out active:scale-[0.99] flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -282,12 +252,7 @@ export const AuthPage: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <svg
-                    className="w-5 h-5"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                    focusable="false"
-                  >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path
                       fill="#EA4335"
                       d="M12 10.2v3.9h5.5c-.2 1.2-.9 2.2-1.9 2.9v2.4h3.1c1.8-1.7 2.8-4.2 2.8-7.1 0-.7-.1-1.4-.2-2.1H12z"
@@ -311,7 +276,6 @@ export const AuthPage: React.FC = () => {
             </button>
           </form>
         </div>
-
       </div>
     </div>
   );

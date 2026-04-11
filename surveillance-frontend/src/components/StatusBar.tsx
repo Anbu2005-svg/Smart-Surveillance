@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertCircle, Bell, CheckCircle, Cpu, Home, LogOut, Radar } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
+import { useTelegramProfile } from '../hooks/useApi';
 
 interface StatusBarProps {
   status: string;
@@ -19,6 +20,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   onMonitorClick,
 }) => {
   const { user, signOut } = useAuth();
+  const { profile, loading: telegramLoading } = useTelegramProfile();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -43,7 +45,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           title="Home"
         >
           <Home className="w-4 h-4 text-cyan-300" />
-          <span className="text-sm font-semibold text-cyan-100 tracking-wide">CCTV HOME</span>
+          <span className="text-sm font-semibold text-cyan-100 tracking-wide">SMART HOME</span>
         </button>
         <button
           onClick={onMonitorClick}
@@ -78,13 +80,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       <div className="flex items-center gap-4">
         {user && (
           <div className="flex items-center gap-3">
-            <div className="text-right">
+            <div className="text-right max-w-[340px]">
               <p className="text-sm font-medium text-slate-200">{user.email}</p>
               <p className="text-xs text-slate-400">Authenticated</p>
+              <p className="text-xs text-cyan-300 truncate" title={telegramLoading
+                ? 'Loading Telegram details...'
+                : profile?.configured
+                  ? `Chat ID: ${profile.telegram_chat_id || '-'} | Mobile: ${profile.telegram_number || '-'}`
+                  : 'Telegram not configured'}>
+                {telegramLoading
+                  ? 'Telegram: loading...'
+                  : profile?.configured
+                    ? `Chat ID: ${profile.telegram_chat_id || '-'} | Mobile: ${profile.telegram_number || '-'}`
+                    : 'Telegram: not configured'}
+              </p>
             </div>
             <button
               onClick={() => navigate('/telegram-setup?edit=1')}
               className="flex items-center gap-2 px-3 py-2 bg-slate-700/90 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition"
+              title="Telegram settings"
             >
               <Bell className="w-4 h-4" />
               Telegram
