@@ -122,3 +122,15 @@ for update
 to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+-- Telegram OTP verification audit trail (primary verification is in-memory)
+create table if not exists public.telegram_otp_sessions (
+  id bigserial primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  telegram_number text not null,
+  status text not null default 'pending',
+  chat_id_discovered text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  verified_at timestamptz
+);

@@ -208,6 +208,35 @@ export const detectionAPI = {
     const response = await apiClient.post('/user/telegram/test', {}, { headers });
     return response.data;
   },
+
+  // Request OTP for Telegram verification (auto chat-ID discovery)
+  requestTelegramOTP: async (
+    telegram_number: string
+  ): Promise<{
+    message: string;
+    otp: string;
+    expires_in: number;
+    bot_username: string | null;
+  }> => {
+    const headers = await getAuthHeaders();
+    const response = await apiClient.post(
+      '/user/telegram/request-otp',
+      { telegram_number },
+      { headers }
+    );
+    return response.data;
+  },
+
+  // Check OTP verification status (poll this after requesting OTP)
+  getTelegramOTPStatus: async (): Promise<{
+    status: string;
+    chat_id_discovered?: string;
+    telegram_number?: string;
+  }> => {
+    const headers = await getAuthHeaders();
+    const response = await apiClient.get('/user/telegram/otp-status', { headers });
+    return response.data;
+  },
 };
 
 export const getApiErrorMessage = (error: unknown): string => {

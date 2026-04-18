@@ -18,6 +18,7 @@ import os
 import base64
 import queue
 import re
+import random
 from urllib import request as urllib_request
 from urllib import parse as urllib_parse
 from urllib import error as urllib_error
@@ -88,6 +89,10 @@ class TelegramProfileResponse(BaseModel):
     telegram_chat_id: Optional[str] = None
     telegram_number: Optional[str] = None
     updated_at: Optional[str] = None
+
+class TelegramOTPRequest(BaseModel):
+    telegram_number: str
+
 
 # ============= FastAPI App =============
 app = FastAPI(
@@ -1489,11 +1494,243 @@ class AlertPipeline:
         self.thread = None
         logger.info("Alert pipeline stopped")
 
+
+class TelegramOTPManager:
+    """Manages OTP generation and verification for Telegram chat-ID discovery."""
+
+    def __init__(self):
+        self.pending = {}
+        self.lock = threading.Lock()
+        self.otp_ttl_sec = int(os.getenv("TELEGRAM_OTP_TTL_SEC", "300"))
+        self.max_requests_per_window = 3
+        self.rate_window_sec = 600
+        self.rate_tracker = {}
+
+    def _cleanup_expired(self):
+        now = time.time()
+        for entry in list(self.pending.values()):
+            if entry["status"] == "pending" and entry["expires_at"] < now:
+                entry["status"] = "expired"
+
+    def _check_rate_limit(self, user_id: str) -> bool:
+        now = time.time()
+        timestamps = self.rate_tracker.get(user_id, [])
+        timestamps = [t for t in timestamps if (now - t) < self.rate_window_sec]
+        self.rate_tracker[user_id] = timestamps
+        return len(timestamps) < self.max_requests_per_window
+
+    def generate_otp(self, user_id: str, phone: str, email: str = "") -> tuple:
+        """Generate a 6-digit OTP. Returns (otp_code, error_message)."""
+        with self.lock:
+            self._cleanup_expired()
+            if not self._check_rate_limit(user_id):
+                return None, "Rate limit exceeded. Please wait a few minutes before requesting another code."
+            # Remove any existing pending OTP for this user
+            to_remove = [k for k, v in self.pending.items() if v["user_id"] == user_id and v["status"] == "pending"]
+            for k in to_remove:
+                del self.pending[k]
+            otp = f"{random.randint(100000, 999999)}"
+            while otp in self.pending:
+                otp = f"{random.randint(100000, 999999)}"
+            now = time.time()
+            self.pending[otp] = {
+                "user_id": user_id,
+                "phone": phone,
+                "email": email,
+                "created_at": now,
+                "expires_at": now + self.otp_ttl_sec,
+                "status": "pending",
+                "chat_id": None,
+            }
+            if user_id not in self.rate_tracker:
+                self.rate_tracker[user_id] = []
+            self.rate_tracker[user_id].append(now)
+            return otp, None
+
+    def validate_and_complete(self, otp_code: str, chat_id: str) -> dict:
+        """Validate an OTP sent via Telegram bot. Returns verification result."""
+        with self.lock:
+            self._cleanup_expired()
+            entry = self.pending.get(otp_code)
+            if not entry:
+                return {"verified": False, "reason": "invalid"}
+            if entry["status"] == "expired":
+                return {"verified": False, "reason": "expired"}
+            if entry["status"] == "verified":
+                return {"verified": False, "reason": "already_verified"}
+            entry["status"] = "verified"
+            entry["chat_id"] = chat_id
+            return {
+                "verified": True,
+                "user_id": entry["user_id"],
+                "phone": entry["phone"],
+                "email": entry.get("email", ""),
+                "chat_id": chat_id,
+            }
+
+    def get_status(self, user_id: str) -> dict:
+        """Get OTP verification status for a user."""
+        with self.lock:
+            self._cleanup_expired()
+            user_entries = [(k, v) for k, v in self.pending.items() if v["user_id"] == user_id]
+            if not user_entries:
+                return {"status": "not_found"}
+            latest = max(user_entries, key=lambda x: x[1]["created_at"])
+            entry = latest[1]
+            result = {"status": entry["status"], "telegram_number": entry.get("phone")}
+            if entry["status"] == "verified" and entry.get("chat_id"):
+                result["chat_id_discovered"] = entry["chat_id"]
+            return result
+
+
+class TelegramBotPoller:
+    """Polls Telegram Bot API for user messages to enable OTP-based chat-ID discovery."""
+
+    def __init__(self, bot_token: str, otp_mgr: TelegramOTPManager):
+        self.bot_token = bot_token
+        self.otp_manager = otp_mgr
+        self.enabled = bool(bot_token)
+        self.running = False
+        self.thread = None
+        self.last_update_id = 0
+        self.bot_username = ""
+        self.poll_timeout = int(os.getenv("TELEGRAM_POLL_TIMEOUT", "30"))
+
+    def start(self):
+        """Start the bot poller thread."""
+        if not self.enabled:
+            logger.info("Telegram bot poller skipped (no bot token)")
+            return
+        if self.running:
+            return
+        try:
+            self._delete_webhook()
+            self._get_bot_info()
+        except Exception as e:
+            logger.error(f"Failed to initialise Telegram bot poller: {e}")
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self.thread.start()
+        logger.info(f"Telegram bot poller started (@{self.bot_username})")
+
+    def _delete_webhook(self):
+        """Ensure no webhook is set, so getUpdates works."""
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/deleteWebhook"
+            req = urllib_request.Request(url)
+            urllib_request.urlopen(req, timeout=10)
+        except Exception:
+            pass
+
+    def _get_bot_info(self):
+        url = f"https://api.telegram.org/bot{self.bot_token}/getMe"
+        req = urllib_request.Request(url)
+        with urllib_request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                self.bot_username = data["result"].get("username", "")
+
+    def _poll_loop(self):
+        while self.running:
+            try:
+                params = urllib_parse.urlencode({
+                    "offset": self.last_update_id + 1,
+                    "timeout": self.poll_timeout,
+                    "allowed_updates": json.dumps(["message"]),
+                })
+                url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates?{params}"
+                req = urllib_request.Request(url)
+                with urllib_request.urlopen(req, timeout=self.poll_timeout + 10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if data.get("ok") and data.get("result"):
+                        for update in data["result"]:
+                            uid = update.get("update_id", 0)
+                            if uid > self.last_update_id:
+                                self.last_update_id = uid
+                            msg = update.get("message")
+                            if msg:
+                                self._handle_message(msg)
+            except Exception as e:
+                if self.running:
+                    logger.debug(f"Bot poller cycle error: {e}")
+                    time.sleep(5)
+
+    def _handle_message(self, message: dict):
+        chat_id = str(message.get("chat", {}).get("id", "")).strip()
+        text = str(message.get("text", "")).strip()
+        if not chat_id or not text:
+            return
+
+        # Handle /start command
+        if text.lower() in ("/start", "/start@" + (self.bot_username or "").lower()):
+            self._send_text(
+                chat_id,
+                "\U0001f3ac <b>Welcome to CCTV Smart Surveillance!</b>\n\n"
+                "To link your account and receive security alerts:\n\n"
+                "1\ufe0f\u20e3 Go to the CCTV website \u2192 Telegram Setup page\n"
+                "2\ufe0f\u20e3 Enter your phone number and click <b>Send Verification Code</b>\n"
+                "3\ufe0f\u20e3 Send the 6-digit code here\n\n"
+                "\U0001f50d Example: <code>123456</code>",
+            )
+            return
+
+        # Check if message is a 6-digit OTP code
+        if re.fullmatch(r"\d{6}", text):
+            result = self.otp_manager.validate_and_complete(text, chat_id)
+            if result.get("verified"):
+                try:
+                    detector.upsert_user_telegram_profile(
+                        user_id=result["user_id"],
+                        email=result.get("email", ""),
+                        telegram_chat_id=chat_id,
+                        telegram_number=result["phone"],
+                    )
+                    self._send_text(
+                        chat_id,
+                        "\u2705 <b>Verification successful!</b>\n\n"
+                        "You will now receive real-time CCTV security alerts "
+                        "(Fire \U0001f525, Weapon \U0001f52b, Intruder \U0001f6a8) directly here.\n\n"
+                        "\U0001f514 Notifications are now active.",
+                    )
+                    logger.info(f"Telegram OTP verified: user {result['user_id']} -> chat {chat_id}")
+                except Exception as e:
+                    logger.error(f"Failed to persist verified Telegram profile: {e}")
+                    self._send_text(chat_id, "\u26a0\ufe0f Verification matched but save failed. Please try again.")
+            else:
+                reason = result.get("reason", "invalid")
+                if reason == "expired":
+                    self._send_text(chat_id, "\u23f0 This code has expired. Request a new one from the website.")
+                elif reason == "already_verified":
+                    self._send_text(chat_id, "\u2705 Already verified. You're all set!")
+                else:
+                    self._send_text(chat_id, "\u274c Invalid code. Please check and try again.")
+
+    def _send_text(self, chat_id: str, text: str):
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode("utf-8")
+            req = urllib_request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            urllib_request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.error(f"Bot poller send failed: {e}")
+
+    def stop(self):
+        """Stop the bot poller thread."""
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=max(self.poll_timeout + 5, 10))
+        self.thread = None
+        logger.info("Telegram bot poller stopped")
+
+
 # Initialize detection manager
 detector = DetectionManager()
 telegram_notifier = TelegramNotifier()
 verifier = AIOutputVerifier()
 alert_pipeline = AlertPipeline(telegram_notifier, verifier)
+otp_manager = TelegramOTPManager()
+bot_poller = TelegramBotPoller(telegram_notifier.bot_token, otp_manager)
 
 def _parse_default_stream_sources() -> List[dict]:
     """
@@ -1644,6 +1881,7 @@ async def startup_event():
     detector.load_model()
     detector.video_upload_dir.mkdir(parents=True, exist_ok=True)
     alert_pipeline.start()
+    bot_poller.start()
     detector.load_persisted_streams()
     
     # Optional default streams from env for multi-camera bootstrap.
@@ -1670,6 +1908,7 @@ async def shutdown_event():
     logger.info("=" * 60)
     detector.shutdown()
     alert_pipeline.stop(wait_for_queue=True, timeout_sec=5.0)
+    bot_poller.stop()
     logger.info("Graceful shutdown complete")
     logger.info("=" * 60 + "\n")
 
@@ -2181,6 +2420,44 @@ async def verifier_status():
             **alert_pipeline.stats,
         },
     }
+
+
+@app.post("/api/user/telegram/request-otp")
+async def request_telegram_otp(
+    payload: TelegramOTPRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Generate a 6-digit OTP for Telegram chat-ID verification."""
+    user = _require_authenticated_user(authorization)
+    telegram_number = _normalize_telegram_number(payload.telegram_number)
+    if not telegram_number:
+        raise HTTPException(status_code=400, detail="Valid Telegram phone number is required")
+
+    otp, error_msg = otp_manager.generate_otp(
+        user_id=user["id"],
+        phone=telegram_number,
+        email=user.get("email", ""),
+    )
+    if error_msg:
+        raise HTTPException(status_code=429, detail=error_msg)
+
+    return {
+        "message": "Verification code generated. Open the Telegram bot and send this code.",
+        "otp": otp,
+        "expires_in": otp_manager.otp_ttl_sec,
+        "bot_username": bot_poller.bot_username or None,
+    }
+
+
+@app.get("/api/user/telegram/otp-status")
+async def get_telegram_otp_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Check OTP verification status for the authenticated user."""
+    user = _require_authenticated_user(authorization)
+    status = otp_manager.get_status(user["id"])
+    return status
+
 
 @app.get("/")
 async def root():

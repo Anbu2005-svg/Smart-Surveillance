@@ -100,13 +100,16 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               type="text"
               placeholder="Webcam ID (e.g., 0, 1, 2)"
               value={webcamSource}
+              onFocus={() => {
+                setSelectedMethod('webcam');
+                setLocalError('');
+              }}
               onChange={(e) => {
                 setSelectedMethod('webcam');
                 setWebcamSource(e.target.value || '0');
                 setLocalError('');
               }}
               className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
-              disabled={selectedMethod !== 'webcam'}
             />
             <p className="text-xs text-gray-400 mt-2">Use your computer's webcam</p>
           </div>
@@ -131,13 +134,16 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               type="text"
               placeholder="IP URL or IP:port/path (e.g., 192.168.1.8:4747/video)"
               value={ipCameraSource}
+              onFocus={() => {
+                setSelectedMethod('ip_camera');
+                setLocalError('');
+              }}
               onChange={(e) => {
                 setSelectedMethod('ip_camera');
                 setIpCameraSource(e.target.value);
                 setLocalError('');
               }}
               className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
-              disabled={selectedMethod !== 'ip_camera'}
             />
             <p className="text-xs text-gray-400 mt-2">Works with RTSP/HTTP URLs, including DroidCam IP links</p>
           </div>
@@ -161,6 +167,10 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
             <input
               type="file"
               accept="video/*"
+              onClick={() => {
+                setSelectedMethod('video_file');
+                setLocalError('');
+              }}
               onChange={(e) => {
                 setSelectedMethod('video_file');
                 const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
@@ -168,7 +178,6 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
                 setLocalError('');
               }}
               className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
-              disabled={selectedMethod !== 'video_file'}
             />
             <p className="text-xs text-gray-400 mt-2">Upload a video file from your system</p>
           </div>
