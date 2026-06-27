@@ -1,29 +1,49 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    API_HOST=0.0.0.0 \
+    API_PORT=5000 \
+    MODEL_PATH="CCTV/best.onnx" \
+    VIDEO_UPLOAD_DIR="uploaded_videos"
+
 WORKDIR /app
 
-# Install system dependencies
+# OpenCV/ONNX runtime dependencies + ffmpeg for network/video stream handling.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsm6 libxext6 libxrender1 libglib2.0-0 libgl1 \
+    libglib2.0-0 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+RUN useradd --create-home --shell /usr/sbin/nologin appuser
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy application files
-COPY main.py config.py stream_processor.py .
+# Backend source files
+COPY main.py config.py stream_processor.py ./
+COPY streams_store.json ./
 
-RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p temp_frames uploaded_videos output_frames \
+# Model assets required by inference (kept separate to avoid copying local venvs).
+RUN mkdir -p CCTV
+COPY ["CCTV/best (1).onnx", "CCTV/best (1).onnx"]
+RUN cp "CCTV/best (1).onnx" "CCTV/best.onnx"
+COPY CCTV/openvino/ CCTV/openvino/
+
+RUN mkdir -p temp_frames uploaded_videos output_frames \
     && chown -R appuser:appuser /app
 
 USER appuser
 
-# Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${API_PORT}/api/health" || exit 1
+
+CMD ["sh", "-c", "uvicorn main:app --host ${API_HOST} --port ${PORT:-${API_PORT}} --workers 1 --proxy-headers"]

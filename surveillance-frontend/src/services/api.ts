@@ -1,8 +1,27 @@
 import axios from 'axios';
 import { supabase } from '../config/supabase';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-export const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
+const normalizeApiBaseUrl = (value: string): string => {
+  const fallback = 'http://localhost:5000/api';
+  const rawValue = (value || fallback).trim() || fallback;
+
+  try {
+    const url = new URL(rawValue);
+    url.pathname = url.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+    if (!url.pathname.endsWith('/api')) {
+      url.pathname = `${url.pathname}/api`.replace(/\/{2,}/g, '/');
+    }
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    const cleaned = rawValue.replace(/([^:])\/{2,}/g, '$1/').replace(/\/+$/, '');
+    return cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`;
+  }
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL || '');
+export const API_ORIGIN = API_BASE_URL.replace(/\/api$/, '');
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
