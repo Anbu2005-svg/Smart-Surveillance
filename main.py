@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
@@ -18,7 +18,8 @@ import os
 import base64
 import queue
 import re
-import random
+import secrets
+import ipaddress
 from urllib import request as urllib_request
 from urllib import parse as urllib_parse
 from urllib import error as urllib_error
@@ -34,6 +35,85 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv()
+
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+FALSY_VALUES = {"0", "false", "no", "off"}
+STREAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+SAFE_CLASS_PATTERN = re.compile(r"^[A-Za-z0-9 _.-]{1,64}$")
+ALLOWED_CAMERA_URL_SCHEMES = {
+    scheme.strip().lower()
+    for scheme in os.getenv("ALLOWED_CAMERA_URL_SCHEMES", "http,https,rtsp,rtmp").split(",")
+    if scheme.strip()
+}
+BLOCKED_CAMERA_HOSTS = {
+    host.strip().lower()
+    for host in os.getenv(
+        "BLOCKED_CAMERA_HOSTS",
+        "localhost,127.0.0.1,::1,0.0.0.0,169.254.169.254,metadata.google.internal",
+    ).split(",")
+    if host.strip()
+}
+VIDEO_FILE_EXTENSIONS = {
+    ext.strip().lower()
+    for ext in os.getenv("ALLOWED_VIDEO_EXTENSIONS", ".mp4,.avi,.mov,.mkv,.webm").split(",")
+    if ext.strip()
+}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, "true" if default else "false").strip().lower()
+    if value in TRUTHY_VALUES:
+        return True
+    if value in FALSY_VALUES:
+        return False
+    return default
+
+
+def _split_env_list(name: str) -> List[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+def _redact_camera_source_for_log(source) -> str:
+    raw = str(source)
+    parsed = urllib_parse.urlsplit(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw
+
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return urllib_parse.urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+
+
+def _infer_input_method_from_source(source) -> str:
+    value = str(source or "").strip()
+    if not value:
+        return ""
+    if value.isdigit():
+        return "webcam"
+
+    parsed = urllib_parse.urlparse(value)
+    if parsed.scheme.lower() in ALLOWED_CAMERA_URL_SCHEMES:
+        return "ip_camera"
+    if Path(value).suffix.lower() in VIDEO_FILE_EXTENSIONS:
+        return "video_file"
+    return ""
+
+
+def _validate_camera_host(hostname: Optional[str]) -> None:
+    host = str(hostname or "").strip().strip("[]").lower()
+    if not host:
+        raise HTTPException(status_code=400, detail="IP camera URL must include a host")
+    if host in BLOCKED_CAMERA_HOSTS:
+        raise HTTPException(status_code=400, detail="Camera host is not allowed")
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        raise HTTPException(status_code=400, detail="Camera host is not allowed")
 
 # ============= Models =============
 class Detection(BaseModel):
@@ -98,11 +178,14 @@ class TelegramOTPRequest(BaseModel):
 app = FastAPI(
     title="CCTV Detection API with YOLOv11n",
     description="Real-time object detection API for CCTV surveillance using optimized YOLOv11n ONNX model",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs" if _env_flag("ENABLE_API_DOCS", False) else None,
+    redoc_url="/redoc" if _env_flag("ENABLE_API_DOCS", False) else None,
+    openapi_url="/openapi.json" if _env_flag("ENABLE_API_DOCS", False) else None,
 )
 
 # Enable CORS from env with safe credentials behavior.
-cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
 allow_any_origin = "*" in cors_origins or not cors_origins
 app.add_middleware(
@@ -121,6 +204,10 @@ async def add_security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    if request.url.path.startswith(("/api/", "/frames/")):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 # ============= Global State =============
@@ -134,6 +221,14 @@ class CameraCapture:
         self.lock = threading.Lock()
         self.reader_thread = None
         self.read_timeout_ms = int(os.getenv("CAMERA_READ_TIMEOUT_MS", "1000"))
+        self.loop_file_sources = os.getenv("LOOP_VIDEO_FILES", "true").lower() == "true"
+        parsed_source = urllib_parse.urlparse(str(source))
+        source_path = Path(str(source))
+        self.is_file_source = (
+            not str(source).isdigit()
+            and parsed_source.scheme.lower() not in {"http", "https", "rtsp", "rtmp"}
+            and source_path.suffix.lower() in VIDEO_FILE_EXTENSIONS
+        )
     
     def start(self):
         """Start camera capture"""
@@ -166,7 +261,7 @@ class CameraCapture:
                 cap.release()
 
         if not self.cap or not self.cap.isOpened():
-            logger.error(f"Failed to open camera/source: {source}")
+            logger.error(f"Failed to open camera/source: {_redact_camera_source_for_log(source)}")
             return False
 
         # Keep camera buffer low to reduce lag from old queued frames.
@@ -180,7 +275,7 @@ class CameraCapture:
         self.is_running = True
         self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader_thread.start()
-        logger.info(f"Camera opened: {source}")
+        logger.info(f"Camera opened: {_redact_camera_source_for_log(source)}")
         return True
 
     def _reader_loop(self):
@@ -192,6 +287,8 @@ class CameraCapture:
                     with self.lock:
                         self.latest_frame = frame
                 else:
+                    if self.is_file_source and self.loop_file_sources and self.cap:
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     time.sleep(0.005)
             except Exception:
                 time.sleep(0.01)
@@ -250,7 +347,13 @@ class DetectionManager:
         self.streams_store_path = Path(os.getenv("STREAMS_STORE_PATH", "streams_store.json"))
         self.streams_store_lock = threading.Lock()
         self.supabase_url = os.getenv("SUPABASE_URL", "").strip().strip('"').strip("'").rstrip("/")
+        self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip().strip('"').strip("'")
         self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip().strip('"').strip("'")
+        self.supabase_auth_key = (
+            os.getenv("SUPABASE_AUTH_KEY", "").strip().strip('"').strip("'")
+            or self.supabase_anon_key
+            or self.supabase_service_role_key
+        )
         self.supabase_streams_table = os.getenv("SUPABASE_STREAMS_TABLE", "camera_streams").strip() or "camera_streams"
         self.supabase_camera_feeds_table = os.getenv("SUPABASE_CAMERA_FEEDS_TABLE", "public.camera_feeds").strip() or "public.camera_feeds"
         self.supabase_detections_table = os.getenv("SUPABASE_DETECTIONS_TABLE", "public.detections").strip() or "public.detections"
@@ -334,6 +437,9 @@ class DetectionManager:
     def is_supabase_configured(self) -> bool:
         return bool(self.supabase_url) and bool(self.supabase_service_role_key)
 
+    def is_supabase_auth_configured(self) -> bool:
+        return bool(self.supabase_url) and bool(self.supabase_auth_key)
+
     def _supabase_request(self, method: str, path: str, params: Optional[dict] = None, data: Optional[dict] = None, prefer: Optional[str] = None):
         schema = None
         normalized_path = path
@@ -384,11 +490,41 @@ class DetectionManager:
                 )
             raise
 
-    def add_stream(self, stream_id: str, stream_name: str, source: str = "0", persist: bool = True):
+    def _stream_record(self, stream_id: str, stream_info: dict, include_input_metadata: bool = True) -> dict:
+        record = {
+            "id": stream_id,
+            "name": str(stream_info.get("name", stream_id)),
+            "source": str(stream_info.get("source", "0")),
+        }
+        if include_input_metadata:
+            input_method = str(stream_info.get("input_method", "")).strip().lower()
+            target_classes = stream_info.get("target_classes", [])
+            if not isinstance(target_classes, list):
+                target_classes = []
+            record["input_method"] = input_method or None
+            record["target_classes"] = [
+                str(cls).strip().lower()
+                for cls in target_classes
+                if str(cls).strip()
+            ]
+        return record
+
+    def add_stream(
+        self,
+        stream_id: str,
+        stream_name: str,
+        source: str = "0",
+        persist: bool = True,
+        input_method: Optional[str] = None,
+        target_classes: Optional[List[str]] = None,
+    ):
         """Add a video stream"""
+        stored_input_method = str(input_method or "").strip().lower() or _infer_input_method_from_source(source)
         self.streams[stream_id] = {
             "name": stream_name,
             "source": source,
+            "input_method": stored_input_method,
+            "target_classes": target_classes or [],
             "status": "inactive",
             "detections": [],
             "current_detections": 0
@@ -402,13 +538,10 @@ class DetectionManager:
         """Persist stream names and sources to Supabase, fallback to disk."""
         if self.is_supabase_configured():
             try:
-                payload = []
-                for stream_id, stream_info in self.streams.items():
-                    payload.append({
-                        "id": stream_id,
-                        "name": str(stream_info.get("name", stream_id)),
-                        "source": str(stream_info.get("source", "0")),
-                    })
+                payload = [
+                    self._stream_record(stream_id, stream_info, include_input_metadata=True)
+                    for stream_id, stream_info in self.streams.items()
+                ]
                 self._supabase_request(
                     "POST",
                     self.supabase_streams_table,
@@ -417,16 +550,30 @@ class DetectionManager:
                 )
                 return
             except Exception as e:
-                logger.error(f"Failed to persist streams to Supabase, falling back to file: {e}")
+                logger.error(f"Failed to persist full stream metadata to Supabase: {e}")
+                try:
+                    payload = [
+                        self._stream_record(stream_id, stream_info, include_input_metadata=False)
+                        for stream_id, stream_info in self.streams.items()
+                    ]
+                    self._supabase_request(
+                        "POST",
+                        self.supabase_streams_table,
+                        data=payload,
+                        prefer="resolution=merge-duplicates,return=minimal",
+                    )
+                    logger.warning(
+                        "Persisted streams without input metadata. Run supabase_schema.sql to add input_method/target_classes."
+                    )
+                    return
+                except Exception as fallback_error:
+                    logger.error(f"Failed to persist streams to Supabase, falling back to file: {fallback_error}")
 
         # Fallback local file persistence
-        records = []
-        for stream_id, stream_info in self.streams.items():
-            records.append({
-                "id": stream_id,
-                "name": str(stream_info.get("name", stream_id)),
-                "source": str(stream_info.get("source", "0")),
-            })
+        records = [
+            self._stream_record(stream_id, stream_info, include_input_metadata=True)
+            for stream_id, stream_info in self.streams.items()
+        ]
 
         try:
             with self.streams_store_lock:
@@ -456,9 +603,20 @@ class DetectionManager:
             stream_id = str(item.get("id", "")).strip()
             name = str(item.get("name", "")).strip()
             source = str(item.get("source", "0")).strip()
+            input_method = str(item.get("input_method", "") or "").strip().lower()
+            target_classes = item.get("target_classes", [])
+            if not isinstance(target_classes, list):
+                target_classes = []
             if not stream_id or not name:
                 continue
-            self.add_stream(stream_id, name, source, persist=persist)
+            self.add_stream(
+                stream_id,
+                name,
+                source,
+                persist=persist,
+                input_method=input_method,
+                target_classes=target_classes,
+            )
             loaded += 1
         return loaded
 
@@ -547,7 +705,7 @@ class DetectionManager:
         row = {
             "stream_id": stream_id,
             "stream_name": str(stream.get("name", stream_id)),
-            "source": str(stream.get("source", "")),
+            "source": _redact_camera_source_for_log(stream.get("source", "")),
             "input_method": str(stream.get("input_method", "")),
             "status": str(stream.get("status", "")),
             "event_type": event,
@@ -596,11 +754,21 @@ class DetectionManager:
         loaded_from_supabase = 0
         if self.is_supabase_configured():
             try:
-                items = self._supabase_request(
-                    "GET",
-                    self.supabase_streams_table,
-                    params={"select": "id,name,source"},
-                )
+                try:
+                    items = self._supabase_request(
+                        "GET",
+                        self.supabase_streams_table,
+                        params={"select": "id,name,source,input_method,target_classes"},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to load stream input metadata from Supabase, retrying basic stream fields: {e}"
+                    )
+                    items = self._supabase_request(
+                        "GET",
+                        self.supabase_streams_table,
+                        params={"select": "id,name,source"},
+                    )
                 if isinstance(items, list):
                     loaded = 0
                     for item in items:
@@ -609,9 +777,20 @@ class DetectionManager:
                         stream_id = str(item.get("id", "")).strip()
                         name = str(item.get("name", "")).strip()
                         source = str(item.get("source", "0")).strip()
+                        input_method = str(item.get("input_method", "") or "").strip().lower()
+                        target_classes = item.get("target_classes", [])
+                        if not isinstance(target_classes, list):
+                            target_classes = []
                         if not stream_id or not name:
                             continue
-                        self.add_stream(stream_id, name, source, persist=False)
+                        self.add_stream(
+                            stream_id,
+                            name,
+                            source,
+                            persist=False,
+                            input_method=input_method,
+                            target_classes=target_classes,
+                        )
                         loaded += 1
                     loaded_from_supabase = loaded
                     logger.info(f"Loaded {loaded} streams from Supabase table {self.supabase_streams_table}")
@@ -797,7 +976,7 @@ class DetectionManager:
             frame_id=frame_id,
             timestamp=datetime.now().isoformat(),
             detections=detection_objects,
-            image_url=f"/frames/{frame_id}.jpg"
+            image_url=f"/api/frames/{frame_id}.jpg"
         )
         
         # Store in detections cache
@@ -1031,9 +1210,17 @@ class TelegramNotifier:
         photo_path: Optional[str] = None,
         photo_bytes: Optional[bytes] = None,
         target_chat_id: Optional[str] = None,
-    ):
+    ) -> bool:
         if not self._can_send(stream_id, detections, target_chat_id):
-            return
+            logger.debug(
+                "Telegram alert skipped for %s: enabled=%s token_set=%s chat_target_set=%s detections=%s",
+                stream_id,
+                self.enabled,
+                bool(self.bot_token),
+                bool(self._resolve_chat_id(target_chat_id)),
+                len(detections or []),
+            )
+            return False
 
         top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
         detection_type = top.get("class_name", "unknown")
@@ -1057,6 +1244,9 @@ class TelegramNotifier:
         if sent:
             self.last_alert_at[stream_id] = time.time()
             logger.info(f"Telegram alert sent for {stream_id}")
+        else:
+            logger.warning(f"Telegram alert verified but could not be sent for {stream_id}")
+        return sent
 
 
 class AIOutputVerifier:
@@ -1448,7 +1638,7 @@ class AlertPipeline:
                 )
 
                 if decision.get("ok") and decision.get("verified"):
-                    self.notifier.notify_detection(
+                    sent = self.notifier.notify_detection(
                         item["stream_id"],
                         item["stream_name"],
                         item["detections"],
@@ -1456,9 +1646,12 @@ class AlertPipeline:
                         item.get("photo_bytes"),
                         item.get("target_chat_id"),
                     )
-                    self.stats["verified_sent"] += 1
+                    if sent:
+                        self.stats["verified_sent"] += 1
+                    else:
+                        self.stats["errors"] += 1
                 elif (not decision.get("ok")) and self.verifier.send_on_error:
-                    self.notifier.notify_detection(
+                    sent = self.notifier.notify_detection(
                         item["stream_id"],
                         item["stream_name"],
                         item["detections"],
@@ -1466,7 +1659,10 @@ class AlertPipeline:
                         item.get("photo_bytes"),
                         item.get("target_chat_id"),
                     )
-                    self.stats["verified_sent"] += 1
+                    if sent:
+                        self.stats["verified_sent"] += 1
+                    else:
+                        self.stats["errors"] += 1
                 else:
                     self.stats["rejected"] += 1
 
@@ -1529,9 +1725,9 @@ class TelegramOTPManager:
             to_remove = [k for k, v in self.pending.items() if v["user_id"] == user_id and v["status"] == "pending"]
             for k in to_remove:
                 del self.pending[k]
-            otp = f"{random.randint(100000, 999999)}"
+            otp = f"{secrets.randbelow(900000) + 100000}"
             while otp in self.pending:
-                otp = f"{random.randint(100000, 999999)}"
+                otp = f"{secrets.randbelow(900000) + 100000}"
             now = time.time()
             self.pending[otp] = {
                 "user_id": user_id,
@@ -1809,16 +2005,16 @@ def _extract_bearer_token(authorization: Optional[str]) -> str:
 
 
 def _require_authenticated_user(authorization: Optional[str]) -> dict:
-    if not detector.is_supabase_configured():
+    if not detector.is_supabase_auth_configured():
         raise HTTPException(
             status_code=503,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in CCTV/.env",
+            detail="Supabase authentication is not configured on the backend",
         )
 
     token = _extract_bearer_token(authorization)
     url = f"{detector.supabase_url}/auth/v1/user"
     headers = {
-        "apikey": detector.supabase_service_role_key,
+        "apikey": detector.supabase_auth_key,
         "Authorization": f"Bearer {token}",
     }
     req = urllib_request.Request(url, headers=headers, method="GET")
@@ -1838,25 +2034,145 @@ def _require_authenticated_user(authorization: Optional[str]) -> dict:
         raise HTTPException(status_code=502, detail=f"Supabase auth error: HTTP {e.code}")
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to verify user token: {e}")
-
-
-def _try_get_authenticated_user(authorization: Optional[str]) -> Optional[dict]:
-    try:
-        return _require_authenticated_user(authorization)
     except Exception:
-        return None
+        raise HTTPException(status_code=502, detail="Failed to verify user token")
 
 
-def _apply_stream_alert_target_for_user(stream_id: str, authorization: Optional[str]):
+def _enforce_api_allowlist(user: dict) -> None:
+    allowed_emails = {email.lower() for email in _split_env_list("ALLOWED_USER_EMAILS")}
+    allowed_user_ids = set(_split_env_list("ALLOWED_USER_IDS"))
+    if not allowed_emails and not allowed_user_ids:
+        return
+
+    email = str(user.get("email", "")).strip().lower()
+    user_id = str(user.get("id", "")).strip()
+    if email in allowed_emails or user_id in allowed_user_ids:
+        return
+    raise HTTPException(status_code=403, detail="User is not allowed to access this CCTV API")
+
+
+def _require_api_user(authorization: Optional[str] = Header(default=None)) -> dict:
+    if not _env_flag("AUTH_REQUIRED", True):
+        return {"id": "local-dev", "email": "local-dev"}
+
+    user = _require_authenticated_user(authorization)
+    _enforce_api_allowlist(user)
+    return user
+
+
+def _validate_stream_id(stream_id: str) -> str:
+    value = str(stream_id or "").strip()
+    if not STREAM_ID_PATTERN.fullmatch(value):
+        raise HTTPException(
+            status_code=400,
+            detail="Stream ID may contain only letters, numbers, underscores, and hyphens",
+        )
+    return value
+
+
+def _validate_label(value: str, field_name: str, max_length: int) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail=f"{field_name} is required")
+    if len(normalized) > max_length:
+        raise HTTPException(status_code=400, detail=f"{field_name} is too long")
+    if any(ord(ch) < 32 for ch in normalized):
+        raise HTTPException(status_code=400, detail=f"{field_name} contains invalid control characters")
+    return normalized
+
+
+def _normalize_target_classes(target_classes: Optional[List[str]]) -> List[str]:
+    if not isinstance(target_classes, list):
+        return []
+
+    normalized_classes = []
+    seen = set()
+    for cls_name in target_classes[:50]:
+        cls_norm = str(cls_name).strip().lower()
+        if not cls_norm or cls_norm in seen:
+            continue
+        if not SAFE_CLASS_PATTERN.fullmatch(cls_norm):
+            raise HTTPException(status_code=400, detail=f"Invalid target class name: {cls_name}")
+        seen.add(cls_norm)
+        normalized_classes.append(cls_norm)
+    return normalized_classes
+
+
+def _normalize_camera_source(input_method: str, raw_source: str) -> str:
+    if input_method == "webcam":
+        source = raw_source or "0"
+        if not source.isdigit():
+            raise HTTPException(status_code=400, detail="Webcam source must be a non-negative numeric camera index")
+        camera_index = int(source)
+        max_index = int(os.getenv("MAX_WEBCAM_INDEX", "16"))
+        if camera_index > max_index:
+            raise HTTPException(status_code=400, detail=f"Webcam source must be between 0 and {max_index}")
+        return str(camera_index)
+
+    if input_method == "ip_camera":
+        if not raw_source:
+            raise HTTPException(status_code=400, detail="IP camera URL is required")
+        if len(raw_source) > 2048:
+            raise HTTPException(status_code=400, detail="IP camera URL is too long")
+        source = raw_source if "://" in raw_source else f"http://{raw_source}"
+        parsed = urllib_parse.urlparse(source)
+        if parsed.scheme.lower() not in ALLOWED_CAMERA_URL_SCHEMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported camera URL scheme. Allowed: {sorted(ALLOWED_CAMERA_URL_SCHEMES)}",
+            )
+        _validate_camera_host(parsed.hostname)
+        return source
+
+    if input_method == "video_file":
+        return _resolve_uploaded_video_source(raw_source)
+
+    raise HTTPException(status_code=400, detail="Invalid input method")
+
+
+def _normalize_stream_source(raw_source: str) -> str:
+    source = _validate_label(raw_source, "Stream source", 2048)
+    if source.isdigit():
+        return _normalize_camera_source("webcam", source)
+    return _normalize_camera_source("ip_camera", source)
+
+
+def _is_path_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_uploaded_video_source(raw_source: str) -> str:
+    safe_name = Path(str(raw_source or "").strip()).name
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Video file path is required")
+
+    upload_root = detector.video_upload_dir.resolve()
+    candidate = Path(raw_source)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (upload_root / safe_name).resolve()
+
+    if not _is_path_within(resolved, upload_root):
+        raise HTTPException(status_code=400, detail="Video files must come from the upload directory")
+    if resolved.suffix.lower() not in detector.allowed_video_extensions:
+        raise HTTPException(status_code=400, detail="Unsupported uploaded video file type")
+    if not resolved.exists() or not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Uploaded video file not found")
+    return str(resolved)
+
+
+def _apply_stream_alert_target_for_user(stream_id: str, user: Optional[dict]):
     """
     Best-effort stream-to-user alert mapping.
     Keeps existing global Telegram behavior untouched when no user mapping is available.
     """
     try:
-        user = _try_get_authenticated_user(authorization)
-        if not user:
+        if not user or not detector.is_supabase_configured():
             detector.clear_stream_alert_target(stream_id)
             return
 
@@ -1864,8 +2180,10 @@ def _apply_stream_alert_target_for_user(stream_id: str, authorization: Optional[
         chat_id = str(profile.get("telegram_chat_id", "")).strip()
         if chat_id:
             detector.set_stream_alert_target(stream_id, user["id"], chat_id)
+            logger.info(f"Telegram alert target attached for {stream_id}")
         else:
             detector.clear_stream_alert_target(stream_id)
+            logger.warning(f"No Telegram chat target configured for {stream_id}")
     except Exception as e:
         logger.debug(f"Unable to set stream alert target for {stream_id}: {e}")
 
@@ -1923,7 +2241,7 @@ async def health_check():
     )
 
 @app.get("/api/streams", response_model=List[VideoStream])
-async def get_streams():
+async def get_streams(user: dict = Depends(_require_api_user)):
     """Get list of available video streams"""
     streams = []
     for stream_id, stream_info in detector.streams.items():
@@ -1937,20 +2255,17 @@ async def get_streams():
 
 
 @app.post("/api/streams", response_model=VideoStream)
-async def create_stream(stream: StreamCreateRequest):
+async def create_stream(stream: StreamCreateRequest, user: dict = Depends(_require_api_user)):
     """Create a new stream manually."""
-    source = str(stream.source).strip()
-    name = str(stream.name).strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Stream name is required")
-    if not source:
-        raise HTTPException(status_code=400, detail="Stream source is required")
+    source = _normalize_stream_source(stream.source)
+    name = _validate_label(stream.name, "Stream name", 100)
 
     stream_id = (stream.id or "").strip()
     if not stream_id:
         stream_id = f"stream_{len(detector.streams) + 1}"
         while stream_id in detector.streams:
             stream_id = f"stream_{len(detector.streams) + 1}_{uuid.uuid4().hex[:4]}"
+    stream_id = _validate_stream_id(stream_id)
 
     if stream_id in detector.streams:
         raise HTTPException(status_code=409, detail="Stream ID already exists")
@@ -1964,8 +2279,9 @@ async def create_stream(stream: StreamCreateRequest):
     )
 
 @app.get("/api/detections/{stream_id}", response_model=List[DetectionResult])
-async def get_detections(stream_id: str):
+async def get_detections(stream_id: str, user: dict = Depends(_require_api_user)):
     """Get detections for a specific stream"""
+    stream_id = _validate_stream_id(stream_id)
     if stream_id not in detector.streams:
         raise HTTPException(status_code=404, detail="Stream not found")
     
@@ -1973,16 +2289,12 @@ async def get_detections(stream_id: str):
 
 
 @app.get("/api/user/telegram", response_model=TelegramProfileResponse)
-async def get_user_telegram_profile(authorization: Optional[str] = Header(default=None)):
+async def get_user_telegram_profile(user: dict = Depends(_require_api_user)):
     """Get authenticated user's Telegram setup status."""
-    user = _require_authenticated_user(authorization)
     try:
         profile = detector.get_user_telegram_profile(user["id"]) or {}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load Telegram profile. Ensure {detector.supabase_user_profiles_table} exists in Supabase. Error: {e}",
-        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to load Telegram profile")
     telegram_chat_id = str(profile.get("telegram_chat_id", "")).strip() or None
     telegram_number = str(profile.get("telegram_number", "")).strip() or None
     updated_at = str(profile.get("updated_at", "")).strip() or None
@@ -1997,18 +2309,23 @@ async def get_user_telegram_profile(authorization: Optional[str] = Header(defaul
 @app.post("/api/user/telegram", response_model=TelegramProfileResponse)
 async def upsert_user_telegram_profile(
     payload: TelegramProfileUpdateRequest,
-    authorization: Optional[str] = Header(default=None),
+    user: dict = Depends(_require_api_user),
 ):
     """
     Save/update authenticated user's Telegram configuration.
     This is additive and does not alter existing bot dispatch logic.
     """
-    user = _require_authenticated_user(authorization)
     telegram_chat_id = _normalize_telegram_chat_id(payload.telegram_chat_id)
     telegram_number = _normalize_telegram_number(payload.telegram_number)
 
     if not telegram_chat_id and not telegram_number:
         raise HTTPException(status_code=400, detail="Provide Telegram chat ID or Telegram mobile number")
+
+    if not detector.is_supabase_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Supabase storage is not configured on the backend",
+        )
 
     try:
         row = detector.upsert_user_telegram_profile(
@@ -2017,11 +2334,8 @@ async def upsert_user_telegram_profile(
             telegram_chat_id=telegram_chat_id,
             telegram_number=telegram_number,
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save Telegram profile. Ensure {detector.supabase_user_profiles_table} exists in Supabase. Error: {e}",
-        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to save Telegram profile")
 
     # Refresh active stream mappings for this user (best effort).
     with detector.stream_alert_targets_lock:
@@ -2045,16 +2359,12 @@ async def upsert_user_telegram_profile(
 
 
 @app.post("/api/user/telegram/test")
-async def test_user_telegram_alert(authorization: Optional[str] = Header(default=None)):
+async def test_user_telegram_alert(user: dict = Depends(_require_api_user)):
     """Send a test message to authenticated user's Telegram chat ID."""
-    user = _require_authenticated_user(authorization)
     try:
         profile = detector.get_user_telegram_profile(user["id"]) or {}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load Telegram profile. Ensure {detector.supabase_user_profiles_table} exists in Supabase. Error: {e}",
-        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to load Telegram profile")
     chat_id = str(profile.get("telegram_chat_id", "")).strip()
     if not chat_id:
         raise HTTPException(status_code=400, detail="Telegram chat ID is not configured for this user")
@@ -2070,10 +2380,23 @@ async def test_user_telegram_alert(authorization: Optional[str] = Header(default
     return {"message": "Telegram test alert sent", "chat_id": chat_id}
 
 @app.post("/api/detection/start/{stream_id}")
-async def start_detection(stream_id: str, authorization: Optional[str] = Header(default=None)):
+async def start_detection(stream_id: str, user: dict = Depends(_require_api_user)):
     """Start detection on a stream - opens camera"""
+    stream_id = _validate_stream_id(stream_id)
     if stream_id not in detector.streams:
         raise HTTPException(status_code=404, detail="Stream not found")
+    saved_source = str(detector.streams[stream_id].get("source", "0"))
+    saved_input_method = str(detector.streams[stream_id].get("input_method", "")).strip().lower()
+    if saved_input_method in {"webcam", "ip_camera", "video_file"}:
+        source_str = _normalize_camera_source(saved_input_method, saved_source)
+    else:
+        source_str = _normalize_stream_source(saved_source)
+    current_camera = detector.camera_captures.get(stream_id)
+    if not current_camera or str(current_camera.source) != source_str:
+        if current_camera:
+            current_camera.stop()
+        detector.camera_captures[stream_id] = CameraCapture(source_str)
+    detector.streams[stream_id]["source"] = source_str
     
     detector.streams[stream_id]["status"] = "active"
     
@@ -2088,15 +2411,16 @@ async def start_detection(stream_id: str, authorization: Optional[str] = Header(
         thread.start()
         logger.info(f"Camera capture started: {stream_id}")
 
-    _apply_stream_alert_target_for_user(stream_id, authorization)
+    _apply_stream_alert_target_for_user(stream_id, user)
     detector.log_camera_feed_event(stream_id, "start")
     
     logger.info(f"Detection started: {stream_id}")
     return {"message": f"Detection started on {stream_id}", "status": "active"}
 
 @app.post("/api/detection/stop/{stream_id}")
-async def stop_detection(stream_id: str):
+async def stop_detection(stream_id: str, user: dict = Depends(_require_api_user)):
     """Stop detection on a stream - closes camera"""
+    stream_id = _validate_stream_id(stream_id)
     if stream_id not in detector.streams:
         raise HTTPException(status_code=404, detail="Stream not found")
     
@@ -2115,38 +2439,17 @@ async def stop_detection(stream_id: str):
 async def start_detection_with_input(
     stream_id: str,
     video_input: VideoInputRequest,
-    authorization: Optional[str] = Header(default=None),
+    user: dict = Depends(_require_api_user),
 ):
     """Start detection with custom video input (webcam, IP camera, or video file)"""
+    stream_id = _validate_stream_id(stream_id)
     if stream_id not in detector.streams:
         raise HTTPException(status_code=404, detail="Stream not found")
     
     try:
         input_method = str(video_input.input_method or "").strip().lower()
         raw_source = str(video_input.input_source or "").strip()
-        source_str = ""
-
-        if input_method == "webcam":
-            if not raw_source:
-                raw_source = "0"
-            if not raw_source.lstrip("-").isdigit():
-                raise HTTPException(status_code=400, detail="Webcam source must be a numeric camera index (example: 0)")
-            source_str = str(int(raw_source))
-        elif input_method == "ip_camera":
-            if not raw_source:
-                raise HTTPException(status_code=400, detail="IP camera URL is required")
-            source_str = raw_source
-            if "://" not in source_str and source_str:
-                source_str = f"http://{source_str}"
-        elif input_method == "video_file":
-            if not raw_source:
-                raise HTTPException(status_code=400, detail="Video file path is required")
-            file_path = Path(raw_source)
-            if not file_path.exists():
-                raise HTTPException(status_code=400, detail=f"Video file not found: {raw_source}")
-            source_str = raw_source
-        else:
-            raise HTTPException(status_code=400, detail="Invalid input method")
+        source_str = _normalize_camera_source(input_method, raw_source)
 
         # Stop any running capture first to avoid stale handle/thread collisions.
         current_thread = detector.capture_threads.get(stream_id)
@@ -2162,20 +2465,12 @@ async def start_detection_with_input(
         if not probe_camera.start():
             raise HTTPException(
                 status_code=400,
-                detail=f"Unable to open {input_method} source '{source_str}'. Check camera/URL/path and try again.",
+                detail=f"Unable to open {input_method} source. Check camera, URL, or uploaded file and try again.",
             )
         detector.camera_captures[stream_id] = probe_camera
         detector.streams[stream_id]["source"] = source_str
         detector.streams[stream_id]["input_method"] = input_method
-        target_classes = video_input.target_classes if isinstance(video_input.target_classes, list) else []
-        normalized_classes = []
-        seen = set()
-        for cls_name in target_classes:
-            cls_norm = str(cls_name).strip().lower()
-            if not cls_norm or cls_norm in seen:
-                continue
-            seen.add(cls_norm)
-            normalized_classes.append(cls_norm)
+        normalized_classes = _normalize_target_classes(video_input.target_classes)
         detector.streams[stream_id]["target_classes"] = normalized_classes
         detector.streams[stream_id]["status"] = "active"
         detector.persist_streams()
@@ -2187,8 +2482,8 @@ async def start_detection_with_input(
         )
         detector.capture_threads[stream_id] = thread
         thread.start()
-        logger.info(f"Camera capture started: {stream_id} ({input_method}: {source_str})")
-        _apply_stream_alert_target_for_user(stream_id, authorization)
+        logger.info(f"Camera capture started: {stream_id} ({input_method}: {_redact_camera_source_for_log(source_str)})")
+        _apply_stream_alert_target_for_user(stream_id, user)
         detector.log_camera_feed_event(stream_id, "start")
 
         logger.info(f"Detection started with custom input: {stream_id}")
@@ -2203,10 +2498,10 @@ async def start_detection_with_input(
         raise
     except Exception as e:
         logger.error(f"Error starting detection with input: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to start detection with the selected input")
 
 @app.post("/api/upload-video")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...), user: dict = Depends(_require_api_user)):
     """Upload a video file and return backend-local path for detection."""
     if not file or not file.filename:
         raise HTTPException(status_code=400, detail="Video file is required")
@@ -2220,28 +2515,52 @@ async def upload_video(file: UploadFile = File(...)):
             detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(detector.allowed_video_extensions)}",
         )
     stored_name = f"{uuid.uuid4().hex}{suffix}"
-    target_path = detector.video_upload_dir / stored_name
+    upload_root = detector.video_upload_dir.resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
+    target_path = (upload_root / stored_name).resolve()
+    if not _is_path_within(target_path, upload_root):
+        raise HTTPException(status_code=400, detail="Invalid upload target")
 
     try:
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
         max_bytes = detector.max_upload_size_mb * 1024 * 1024
-        if len(content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"File is too large. Max size is {detector.max_upload_size_mb} MB")
-        target_path.write_bytes(content)
+        bytes_written = 0
+        with target_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File is too large. Max size is {detector.max_upload_size_mb} MB",
+                    )
+                output.write(chunk)
+
+        if bytes_written == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
         return {
             "filename": safe_name,
-            "stored_path": str(target_path.resolve()),
+            "stored_path": stored_name,
         }
     except HTTPException:
+        try:
+            target_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         raise
     except Exception as e:
+        try:
+            target_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         logger.error(f"Video upload failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Video upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Video upload failed")
+    finally:
+        await file.close()
 
 @app.get("/api/statistics", response_model=Statistics)
-async def get_statistics():
+async def get_statistics(user: dict = Depends(_require_api_user)):
     """Get detection statistics"""
     active_count = sum(1 for s in detector.streams.values() if s["status"] == "active")
     avg_time = np.mean(detector.processing_times) if detector.processing_times else 0.0
@@ -2253,22 +2572,33 @@ async def get_statistics():
         frames_processed=detector.frames_processed
     )
 
+@app.get("/api/frames/{frame_id}.jpg")
 @app.get("/frames/{frame_id}.jpg")
-async def get_frame(frame_id: str):
+async def get_frame(frame_id: str, user: dict = Depends(_require_api_user)):
     """Get a specific frame image"""
+    try:
+        uuid.UUID(frame_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid frame ID")
+
     with detector.frame_cache_lock:
         frame_bytes = detector.frame_cache.get(frame_id)
     if frame_bytes:
-        return Response(content=frame_bytes, media_type="image/jpeg")
+        return Response(
+            content=frame_bytes,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
 
     frame_path = Path("temp_frames") / f"{frame_id}.jpg"
     if not frame_path.exists():
         raise HTTPException(status_code=404, detail="Frame not found")
-    return FileResponse(frame_path, media_type="image/jpeg")
+    return FileResponse(frame_path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 @app.post("/api/process-frame/{stream_id}")
-async def process_frame(stream_id: str):
+async def process_frame(stream_id: str, user: dict = Depends(_require_api_user)):
     """Process a frame from a stream"""
+    stream_id = _validate_stream_id(stream_id)
     if stream_id not in detector.streams:
         raise HTTPException(status_code=404, detail="Stream not found")
     
@@ -2289,7 +2619,7 @@ async def process_frame(stream_id: str):
     return result
 
 @app.get("/api/info")
-async def get_info():
+async def get_info(user: dict = Depends(_require_api_user)):
     """Get API information"""
     return {
         "name": "CCTV Detection API",
@@ -2302,7 +2632,9 @@ async def get_info():
         "stream_storage": {
             "provider": "supabase" if detector.is_supabase_configured() else "file",
             "supabase_configured": detector.is_supabase_configured(),
+            "supabase_auth_configured": detector.is_supabase_auth_configured(),
             "supabase_url_set": bool(detector.supabase_url),
+            "supabase_anon_key_set": bool(detector.supabase_anon_key),
             "supabase_service_key_set": bool(detector.supabase_service_role_key),
             "supabase_table": detector.supabase_streams_table,
             "user_profiles_table": detector.supabase_user_profiles_table,
@@ -2337,7 +2669,7 @@ async def get_info():
     }
 
 @app.get("/api/telegram/status")
-async def telegram_status():
+async def telegram_status(user: dict = Depends(_require_api_user)):
     """Get Telegram notifier status."""
     return {
         "enabled": telegram_notifier.enabled,
@@ -2350,11 +2682,13 @@ async def telegram_status():
 
 
 @app.get("/api/supabase/status")
-async def supabase_status():
+async def supabase_status(user: dict = Depends(_require_api_user)):
     """Get Supabase stream storage status."""
     return {
         "configured": detector.is_supabase_configured(),
+        "auth_configured": detector.is_supabase_auth_configured(),
         "supabase_url_set": bool(detector.supabase_url),
+        "supabase_anon_key_set": bool(detector.supabase_anon_key),
         "supabase_service_key_set": bool(detector.supabase_service_role_key),
         "table": detector.supabase_streams_table,
         "timeout_sec": detector.supabase_timeout_sec,
@@ -2371,12 +2705,12 @@ async def supabase_status():
     }
 
 @app.post("/api/supabase/sync")
-async def supabase_sync():
+async def supabase_sync(user: dict = Depends(_require_api_user)):
     """Manually sync current stream records to Supabase."""
     if not detector.is_supabase_configured():
         raise HTTPException(
             status_code=400,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in CCTV/.env",
+            detail="Supabase is not configured on the backend",
         )
 
     detector.persist_streams()
@@ -2389,7 +2723,7 @@ async def supabase_sync():
     }
 
 @app.post("/api/test-telegram-alert")
-async def test_telegram_alert():
+async def test_telegram_alert(user: dict = Depends(_require_api_user)):
     """Send a test Telegram alert."""
     if not telegram_notifier.is_configured():
         raise HTTPException(status_code=400, detail="Telegram is not configured")
@@ -2404,7 +2738,7 @@ async def test_telegram_alert():
 
 
 @app.get("/api/verifier/status")
-async def verifier_status():
+async def verifier_status(user: dict = Depends(_require_api_user)):
     """Get verifier and async alert pipeline status."""
     return {
         "enabled": verifier.enabled,
@@ -2425,10 +2759,9 @@ async def verifier_status():
 @app.post("/api/user/telegram/request-otp")
 async def request_telegram_otp(
     payload: TelegramOTPRequest,
-    authorization: Optional[str] = Header(default=None),
+    user: dict = Depends(_require_api_user),
 ):
     """Generate a 6-digit OTP for Telegram chat-ID verification."""
-    user = _require_authenticated_user(authorization)
     telegram_number = _normalize_telegram_number(payload.telegram_number)
     if not telegram_number:
         raise HTTPException(status_code=400, detail="Valid Telegram phone number is required")
@@ -2451,10 +2784,9 @@ async def request_telegram_otp(
 
 @app.get("/api/user/telegram/otp-status")
 async def get_telegram_otp_status(
-    authorization: Optional[str] = Header(default=None),
+    user: dict = Depends(_require_api_user),
 ):
     """Check OTP verification status for the authenticated user."""
-    user = _require_authenticated_user(authorization)
     status = otp_manager.get_status(user["id"])
     return status
 
@@ -2462,10 +2794,11 @@ async def get_telegram_otp_status(
 @app.get("/")
 async def root():
     """Root endpoint"""
+    docs_url = "/docs" if _env_flag("ENABLE_API_DOCS", False) else None
     return {
         "message": "CCTV Detection API with YOLOv11n ONNX",
-        "docs": "/docs",
-        "redoc": "/redoc",
+        "docs": docs_url,
+        "redoc": "/redoc" if docs_url else None,
         "info": "/api/info",
         "health": "/api/health"
     }

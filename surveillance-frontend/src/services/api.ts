@@ -2,6 +2,7 @@ import axios from 'axios';
 import { supabase } from '../config/supabase';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+export const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -75,18 +76,11 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
   return { Authorization: `Bearer ${accessToken}` };
 };
 
-const getOptionalAuthHeaders = async (): Promise<Record<string, string>> => {
-  try {
-    return await getAuthHeaders();
-  } catch {
-    return {};
-  }
-};
-
 export const detectionAPI = {
   // Get list of available video streams
   getVideoStreams: async (): Promise<VideoStream[]> => {
-    const response = await apiClient.get('/streams');
+    const headers = await getAuthHeaders();
+    const response = await apiClient.get('/streams', { headers });
     return response.data;
   },
 
@@ -96,20 +90,21 @@ export const detectionAPI = {
     source: string,
     id?: string
   ): Promise<VideoStream> => {
-    const headers = await getOptionalAuthHeaders();
+    const headers = await getAuthHeaders();
     const response = await apiClient.post('/streams', { name, source, id }, { headers });
     return response.data;
   },
 
   // Get current detections from a specific stream
   getDetections: async (streamId: string): Promise<DetectionResult[]> => {
-    const response = await apiClient.get(`/detections/${streamId}`);
+    const headers = await getAuthHeaders();
+    const response = await apiClient.get(`/detections/${streamId}`, { headers });
     return response.data;
   },
 
   // Start detection on a stream
   startDetection: async (streamId: string): Promise<{ message: string }> => {
-    const headers = await getOptionalAuthHeaders();
+    const headers = await getAuthHeaders();
     const response = await apiClient.post(`/detection/start/${streamId}`, {}, { headers });
     return response.data;
   },
@@ -121,7 +116,7 @@ export const detectionAPI = {
     inputSource: string,
     targetClasses?: string[]
   ): Promise<{ message: string; status: string; input_method: string; input_source: string; target_classes?: string[] }> => {
-    const headers = await getOptionalAuthHeaders();
+    const headers = await getAuthHeaders();
     const response = await apiClient.post(
       `/detection/start-with-input/${streamId}`,
       {
@@ -137,22 +132,24 @@ export const detectionAPI = {
   uploadVideoFile: async (file: File): Promise<{ filename: string; stored_path: string }> => {
     const formData = new FormData();
     formData.append('file', file);
+    const headers = await getAuthHeaders();
     const response = await apiClient.post('/upload-video', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers,
     });
     return response.data;
   },
 
   // Stop detection on a stream
   stopDetection: async (streamId: string): Promise<{ message: string }> => {
-    const headers = await getOptionalAuthHeaders();
+    const headers = await getAuthHeaders();
     const response = await apiClient.post(`/detection/stop/${streamId}`, {}, { headers });
     return response.data;
   },
 
   // Process a single frame (for real-time updates)
   processFrame: async (streamId: string): Promise<DetectionResult> => {
-    const response = await apiClient.post(`/process-frame/${streamId}`);
+    const headers = await getAuthHeaders();
+    const response = await apiClient.post(`/process-frame/${streamId}`, {}, { headers });
     return response.data;
   },
 
@@ -168,13 +165,15 @@ export const detectionAPI = {
     active_streams: number;
     processing_time: number;
   }> => {
-    const response = await apiClient.get('/statistics');
+    const headers = await getAuthHeaders();
+    const response = await apiClient.get('/statistics', { headers });
     return response.data;
   },
 
   // Get AI verifier and alert pipeline status
   getVerifierStatus: async (): Promise<VerifierStatus> => {
-    const response = await apiClient.get('/verifier/status');
+    const headers = await getAuthHeaders();
+    const response = await apiClient.get('/verifier/status', { headers });
     return response.data;
   },
 
@@ -236,6 +235,16 @@ export const detectionAPI = {
     const headers = await getAuthHeaders();
     const response = await apiClient.get('/user/telegram/otp-status', { headers });
     return response.data;
+  },
+
+  getFrameObjectUrl: async (imageUrl: string): Promise<string> => {
+    const headers = await getAuthHeaders();
+    const absoluteUrl = imageUrl.startsWith('http') ? imageUrl : `${API_ORIGIN}${imageUrl}`;
+    const response = await axios.get(absoluteUrl, {
+      headers,
+      responseType: 'blob',
+    });
+    return URL.createObjectURL(response.data);
   },
 };
 

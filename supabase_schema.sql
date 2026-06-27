@@ -5,9 +5,15 @@ create table if not exists public.camera_streams (
   id text primary key,
   name text not null,
   source text not null,
+  input_method text,
+  target_classes jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.camera_streams
+  add column if not exists input_method text,
+  add column if not exists target_classes jsonb not null default '[]'::jsonb;
 
 create table if not exists public.camera_feeds (
   id bigserial primary key,
@@ -60,6 +66,18 @@ create table if not exists public.user_profiles (
   updated_at timestamptz not null default now()
 );
 
+-- Backend-owned tables are written through the server with the service role key.
+-- Keep direct client access closed; service_role bypasses RLS for backend jobs.
+alter table public.camera_streams enable row level security;
+alter table public.camera_feeds enable row level security;
+alter table public.detections enable row level security;
+alter table public.security_events enable row level security;
+
+revoke all on table public.camera_streams from anon, authenticated;
+revoke all on table public.camera_feeds from anon, authenticated;
+revoke all on table public.detections from anon, authenticated;
+revoke all on table public.security_events from anon, authenticated;
+
 -- Keep camera_streams updated_at fresh on updates
 create or replace function public.set_updated_at_camera_streams()
 returns trigger
@@ -98,7 +116,11 @@ create policy "allow_insert_auth_attempts"
 on public.auth_attempts
 for insert
 to anon, authenticated
-with check (true);
+with check (
+  (email is null or length(email) <= 320)
+  and (provider is null or length(provider) <= 64)
+  and (reason is null or length(reason) <= 512)
+);
 
 alter table public.user_profiles enable row level security;
 drop policy if exists "user_profiles_select_own" on public.user_profiles;
@@ -134,3 +156,6 @@ create table if not exists public.telegram_otp_sessions (
   expires_at timestamptz not null,
   verified_at timestamptz
 );
+
+alter table public.telegram_otp_sessions enable row level security;
+revoke all on table public.telegram_otp_sessions from anon, authenticated;

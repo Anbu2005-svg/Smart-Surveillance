@@ -3,6 +3,7 @@ import { StatusBar } from '../components/StatusBar';
 import { VideoFeed } from '../components/VideoFeed';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { VideoInputModal } from '../components/VideoInputModal';
+import { AuthenticatedFrameImage } from '../components/AuthenticatedFrameImage';
 import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus, useVerifierStatus } from '../hooks/useApi';
 import { Activity, Flame, Play, ShieldAlert, Square, UserRound } from 'lucide-react';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
@@ -44,8 +45,7 @@ export const Dashboard: React.FC = () => {
   const selectedHistory = detections.length > 0 ? detections : (detectionsByStream[selectedStreamId] || []);
   const currentDetection = selectedHistory.length > 0 ? selectedHistory[selectedHistory.length - 1] : null;
   const currentDetections = currentDetection?.detections || [];
-  const apiOrigin = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '');
-
+  const selectedStream = streams.find((stream) => stream.id === selectedStreamId);
   const activeStreams = useMemo(
     () => activeStreamList.length,
     [activeStreamList]
@@ -356,7 +356,6 @@ export const Dashboard: React.FC = () => {
                   {activeStreamList.map((stream) => {
                     const streamHistory = detectionsByStream[stream.id] || [];
                     const latest = streamHistory.length > 0 ? streamHistory[streamHistory.length - 1] : null;
-                    const frameSrc = latest?.image_url ? `${apiOrigin}${latest.image_url}?t=${Date.now()}` : '';
                     const fps = getStreamFps(streamHistory);
 
                     return (
@@ -378,7 +377,13 @@ export const Dashboard: React.FC = () => {
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center">
                           {latest?.image_url ? (
-                            <img src={frameSrc} alt={`${stream.name} feed`} className="w-full h-full object-cover" />
+                            <AuthenticatedFrameImage
+                              src={latest.image_url}
+                              alt={`${stream.name} feed`}
+                              className="w-full h-full object-cover"
+                              refreshKey={latest.frame_id}
+                              fallback={<p className="text-xs text-slate-400">Loading feed...</p>}
+                            />
                           ) : (
                             <p className="text-xs text-slate-400">
                               {loadingByStream[stream.id] ? 'Loading feed...' : 'Waiting for frames...'}
@@ -402,6 +407,7 @@ export const Dashboard: React.FC = () => {
                     detectionResult={currentDetection}
                     isLoading={detectionsLoading}
                     streamId={selectedStreamId}
+                    isStreamActive={selectedStream?.status === 'active'}
                   />
                 </div>
                 <div className="glass-panel rounded-xl p-4">

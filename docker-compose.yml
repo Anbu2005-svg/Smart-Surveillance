@@ -4,12 +4,21 @@ services:
   backend:
     build: .
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=5000
+      - AUTH_REQUIRED=true
+      - ENABLE_API_DOCS=false
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+      - SUPABASE_AUTH_KEY=${SUPABASE_AUTH_KEY:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - DEVICE=cpu
       - CONFIDENCE_THRESHOLD=0.5
+      - ALLOWED_CAMERA_URL_SCHEMES=http,https,rtsp,rtmp
+      - BLOCKED_CAMERA_HOSTS=localhost,127.0.0.1,::1,0.0.0.0,169.254.169.254,metadata.google.internal
     volumes:
       - ./temp_frames:/app/temp_frames
       - ./output_frames:/app/output_frames
@@ -19,7 +28,7 @@ services:
   frontend:
     build: ./surveillance-frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - VITE_API_URL=http://backend:5000/api
     depends_on:
