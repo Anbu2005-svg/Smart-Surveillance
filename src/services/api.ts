@@ -1,8 +1,18 @@
 import axios from 'axios';
 import { supabase } from '../config/supabase';
 
+const RENDER_BACKEND_API_URL = 'https://smart-surveillance-backend-8ztg.onrender.com/api';
+
+const getDefaultApiBaseUrl = (): string => {
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('.onrender.com')) {
+    return RENDER_BACKEND_API_URL;
+  }
+
+  return 'http://localhost:5000/api';
+};
+
 const normalizeApiBaseUrl = (value: string): string => {
-  const fallback = 'http://localhost:5000/api';
+  const fallback = getDefaultApiBaseUrl();
   const rawValue = (value || fallback).trim() || fallback;
 
   try {
