@@ -40,6 +40,7 @@ dist/
 
 # Models (optional)
 *.onnx
+!CCTV/best (1).onnx
 *.pt
 yolov8*.pt
 
