@@ -185,7 +185,12 @@ app = FastAPI(
 )
 
 # Enable CORS from env with safe credentials behavior.
-cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+default_cors_origins = (
+    "http://localhost:3000,"
+    "http://127.0.0.1:3000,"
+    "https://smart-surveillance-frontend.onrender.com"
+)
+cors_origins_env = os.getenv("CORS_ORIGINS", default_cors_origins)
 cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
 allow_any_origin = "*" in cors_origins or not cors_origins
 app.add_middleware(
