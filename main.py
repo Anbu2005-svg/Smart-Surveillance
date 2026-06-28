@@ -391,6 +391,8 @@ class DetectionManager:
             "inference_time": 0.0
         }
         self.fp16_allowed = True
+        self.loaded_model_path = None
+        self.fallback_model_path = None
         
     def load_model(self):
         """Load model and select best available device."""
@@ -415,6 +417,7 @@ class DetectionManager:
                 logger.warning(f"Configured model not found: {self.model_path}, falling back to yolov11n.pt")
                 model_candidate = Path("yolov11n.pt")
 
+            original_model_candidate = model_candidate
             prefer_quantized = os.getenv("PREFER_QUANTIZED_MODEL", "true").lower() == "true"
             if prefer_quantized and model_candidate.suffix.lower() == ".onnx":
                 quantized_candidates = [
@@ -428,6 +431,12 @@ class DetectionManager:
                         break
 
             self.model = YOLO(str(model_candidate))
+            self.loaded_model_path = model_candidate
+            self.fallback_model_path = (
+                original_model_candidate
+                if original_model_candidate.exists() and original_model_candidate != model_candidate
+                else None
+            )
             self.model_info["model_name"] = model_candidate.name
             self.model_info["format"] = model_candidate.suffix.replace(".", "").upper() or "PT"
             if model_candidate.exists():
@@ -451,6 +460,33 @@ class DetectionManager:
             logger.error(f"Error loading model: {e}")
             logger.error("=" * 60)
             return False
+
+    def _is_quantized_runtime_error(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return (
+            "convinteger" in message
+            or ("not_implemented" in message and "quant" in message)
+            or ("could not find an implementation" in message and "quant" in message)
+        )
+
+    def _reload_fallback_model(self) -> bool:
+        if not self.fallback_model_path or not self.fallback_model_path.exists():
+            return False
+
+        logger.warning(
+            f"Quantized model failed on this runtime; falling back to {self.fallback_model_path}."
+        )
+        self.model = YOLO(str(self.fallback_model_path))
+        self.loaded_model_path = self.fallback_model_path
+        self.fallback_model_path = None
+        self.model_info["model_name"] = self.loaded_model_path.name
+        self.model_info["format"] = self.loaded_model_path.suffix.replace(".", "").upper() or "PT"
+        model_size = self.loaded_model_path.stat().st_size / (1024 * 1024)
+        self.model_info["model_size"] = f"{model_size:.2f} MB"
+        if self.model_info["format"] == "ONNX":
+            self.fp16_allowed = False
+            self.use_half_precision = False
+        return True
 
     def get_gpu_status(self) -> bool:
         """Check GPU availability"""
@@ -865,21 +901,30 @@ class DetectionManager:
                     and ("float16" in msg.lower())
                     and ("expected: (tensor(float))".lower() in msg.lower() or "expected float" in msg.lower())
                 )
-                if not fp16_dtype_mismatch:
+                if fp16_dtype_mismatch:
+                    # Safe fallback: disable FP16 after first mismatch and retry once.
+                    logger.warning("FP16 input rejected by model runtime; retrying inference in FP32.")
+                    self.use_half_precision = False
+                    self.fp16_allowed = False
+                    results = self.model(
+                        frame,
+                        device=self.device,
+                        verbose=False,
+                        conf=inference_conf,
+                        half=False,
+                        imgsz=self.inference_imgsz,
+                    )
+                elif self._is_quantized_runtime_error(e) and self._reload_fallback_model():
+                    results = self.model(
+                        frame,
+                        device=self.device,
+                        verbose=False,
+                        conf=inference_conf,
+                        half=False,
+                        imgsz=self.inference_imgsz,
+                    )
+                else:
                     raise
-
-                # Safe fallback: disable FP16 after first mismatch and retry once.
-                logger.warning("FP16 input rejected by model runtime; retrying inference in FP32.")
-                self.use_half_precision = False
-                self.fp16_allowed = False
-                results = self.model(
-                    frame,
-                    device=self.device,
-                    verbose=False,
-                    conf=inference_conf,
-                    half=False,
-                    imgsz=self.inference_imgsz,
-                )
             
             inference_time = time.time() - start_time
             self.model_info["inference_time"] = inference_time
