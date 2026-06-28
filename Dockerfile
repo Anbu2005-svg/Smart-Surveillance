@@ -5,7 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     API_HOST=0.0.0.0 \
     API_PORT=5000 \
-    MODEL_PATH="CCTV/best.onnx" \
+    MODEL_PATH="CCTV/best-int8.onnx" \
+    DEVICE=cpu \
+    USE_HALF_PRECISION=false \
+    PROCESS_FRAME_WIDTH=416 \
+    PROCESS_FRAME_HEIGHT=312 \
+    MAX_CACHED_FRAMES=12 \
+    DETECTIONS_HISTORY_SIZE=4 \
+    DETECTION_PROCESS_FPS=2 \
+    JPEG_QUALITY=65 \
     VIDEO_UPLOAD_DIR="uploaded_videos"
 
 WORKDIR /app
@@ -27,13 +35,14 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Backend source files
-COPY main.py config.py stream_processor.py ./
+COPY main.py config.py stream_processor.py quantize_model.py ./
 COPY streams_store.json ./
 
 # Model assets required by inference (kept separate to avoid copying local venvs).
 RUN mkdir -p CCTV
 COPY ["CCTV/best (1).onnx", "CCTV/best (1).onnx"]
 RUN cp "CCTV/best (1).onnx" "CCTV/best.onnx"
+RUN python quantize_model.py || cp "CCTV/best.onnx" "CCTV/best-int8.onnx"
 COPY CCTV/openvino/ CCTV/openvino/
 
 RUN mkdir -p temp_frames uploaded_videos output_frames \

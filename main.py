@@ -346,6 +346,7 @@ class DetectionManager:
         self.process_fps = float(os.getenv("DETECTION_PROCESS_FPS", "8"))
         self.process_width = int(os.getenv("PROCESS_FRAME_WIDTH", "640"))
         self.process_height = int(os.getenv("PROCESS_FRAME_HEIGHT", "480"))
+        self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "416"))
         self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
         self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "false").lower() == "true"
         self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "80"))
@@ -842,7 +843,8 @@ class DetectionManager:
                     device=self.device,
                     verbose=False,
                     conf=inference_conf,
-                    half=use_half
+                    half=use_half,
+                    imgsz=self.inference_imgsz,
                 )
             except Exception as e:
                 msg = str(e)
@@ -863,7 +865,8 @@ class DetectionManager:
                     device=self.device,
                     verbose=False,
                     conf=inference_conf,
-                    half=False
+                    half=False,
+                    imgsz=self.inference_imgsz,
                 )
             
             inference_time = time.time() - start_time
@@ -2598,6 +2601,7 @@ async def process_browser_frame(
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None:
             raise HTTPException(status_code=400, detail="Browser camera frame could not be decoded")
+        frame = cv2.resize(frame, (detector.process_width, detector.process_height))
 
         parsed_classes = []
         if target_classes:
