@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { X, Camera, Webcam, RadioTower, FileVideo } from 'lucide-react';
 
 interface VideoInputModalProps {
@@ -29,26 +29,19 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
   const [dragTarget, setDragTarget] = useState<'video_file' | 'image_file' | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
-  const handleDroppedFile = (
-    event: React.DragEvent<HTMLLabelElement>,
-    method: 'video_file' | 'image_file'
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setDragTarget(null);
-    setSelectedMethod(method);
-
-    const selected = event.dataTransfer.files && event.dataTransfer.files.length > 0
-      ? event.dataTransfer.files[0]
-      : null;
+  const handleSelectedFile = (selected: File | null, method: 'video_file' | 'image_file') => {
     if (!selected) return;
 
+    setSelectedMethod(method);
     const isVideo = method === 'video_file';
     const expectedType = isVideo ? 'video/' : 'image/';
-    if (!selected.type.startsWith(expectedType)) {
+    const hasExpectedType = selected.type ? selected.type.startsWith(expectedType) : true;
+    if (!hasExpectedType) {
       setLocalError(`Drop a valid ${isVideo ? 'video' : 'image'} file.`);
       return;
     }
@@ -61,6 +54,20 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
     setLocalError('');
   };
 
+  const handleDroppedFile = (
+    event: React.DragEvent<HTMLElement>,
+    method: 'video_file' | 'image_file'
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTarget(null);
+
+    const selected = event.dataTransfer.files && event.dataTransfer.files.length > 0
+      ? event.dataTransfer.files[0]
+      : null;
+    handleSelectedFile(selected, method);
+  };
+
   const getDropZoneClass = (method: 'video_file' | 'image_file') =>
     `block rounded border border-dashed px-3 py-4 text-center transition ${
       dragTarget === method
@@ -70,6 +77,13 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
   const getFileLabel = (file: File | null, fallback: string) =>
     file ? file.name : fallback;
+
+  const getSubmitLabel = () => {
+    if (isSubmitting) return selectedMethod === 'image_file' ? 'Uploading...' : 'Starting...';
+    if (selectedMethod === 'image_file') return 'Upload & Detect';
+    if (selectedMethod === 'video_file') return 'Upload & Start';
+    return 'Start Detection';
+  };
 
   const handleConfirm = async () => {
     const sourceByMethod: Record<string, string> = {
@@ -228,8 +242,14 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               <FileVideo className="w-5 h-5 text-purple-400" />
               <span className="font-semibold text-white">Video File</span>
             </div>
-            <label
+            <div
               className={getDropZoneClass('video_file')}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedMethod('video_file');
+                setLocalError('');
+                videoInputRef.current?.click();
+              }}
               onDragEnter={(e) => {
                 e.preventDefault();
                 setSelectedMethod('video_file');
@@ -248,21 +268,17 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               </span>
               <span className="block text-xs text-gray-400 mt-1">MP4, AVI, MOV, MKV, WEBM</span>
               <input
+                ref={videoInputRef}
                 type="file"
                 accept="video/*"
-                onClick={() => {
-                  setSelectedMethod('video_file');
-                  setLocalError('');
-                }}
                 onChange={(e) => {
-                  setSelectedMethod('video_file');
                   const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-                  setVideoFile(selected);
-                  setLocalError('');
+                  handleSelectedFile(selected, 'video_file');
+                  e.target.value = '';
                 }}
                 className="sr-only"
               />
-            </label>
+            </div>
             <p className="text-xs text-gray-400 mt-2">Upload a video file from your system</p>
           </div>
 
@@ -282,8 +298,14 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               <Camera className="w-5 h-5 text-amber-400" />
               <span className="font-semibold text-white">Image File</span>
             </div>
-            <label
+            <div
               className={getDropZoneClass('image_file')}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedMethod('image_file');
+                setLocalError('');
+                imageInputRef.current?.click();
+              }}
               onDragEnter={(e) => {
                 e.preventDefault();
                 setSelectedMethod('image_file');
@@ -302,21 +324,17 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               </span>
               <span className="block text-xs text-gray-400 mt-1">JPG, PNG, WEBP, BMP</span>
               <input
+                ref={imageInputRef}
                 type="file"
                 accept="image/*"
-                onClick={() => {
-                  setSelectedMethod('image_file');
-                  setLocalError('');
-                }}
                 onChange={(e) => {
-                  setSelectedMethod('image_file');
                   const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-                  setImageFile(selected);
-                  setLocalError('');
+                  handleSelectedFile(selected, 'image_file');
+                  e.target.value = '';
                 }}
                 className="sr-only"
               />
-            </label>
+            </div>
             <p className="text-xs text-gray-400 mt-2">Upload one image and run detection once</p>
           </div>
 
@@ -386,7 +404,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
             disabled={isSubmitting}
             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded transition"
           >
-            {isSubmitting ? 'Starting...' : 'Start Detection'}
+            {getSubmitLabel()}
           </button>
         </div>
       </div>
