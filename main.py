@@ -2576,7 +2576,7 @@ async def process_browser_frame(
     stream_id: str,
     request: Request,
     file: Optional[UploadFile] = File(default=None),
-    frame: Optional[UploadFile] = File(default=None),
+    frame_file: Optional[UploadFile] = File(default=None),
     target_classes: Optional[str] = Form(default=None),
     user: dict = Depends(_require_api_user),
 ):
@@ -2586,7 +2586,7 @@ async def process_browser_frame(
         raise HTTPException(status_code=404, detail="Stream not found")
 
     try:
-        upload = file or frame
+        upload = file or frame_file
         if upload:
             frame_bytes = await upload.read()
         else:
@@ -2633,8 +2633,8 @@ async def process_browser_frame(
     finally:
         if file:
             await file.close()
-        if frame and frame is not file:
-            await frame.close()
+        if frame_file and frame_file is not file:
+            await frame_file.close()
 
 @app.get("/api/statistics", response_model=Statistics)
 async def get_statistics(user: dict = Depends(_require_api_user)):
