@@ -5,7 +5,7 @@ export const useDetections = (streamId: string) => {
   const [detections, setDetections] = useState<DetectionResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollMs = Number(import.meta.env.VITE_DETECTIONS_POLL_MS || 100);
+  const pollMs = Number(import.meta.env.VITE_DETECTIONS_POLL_MS || 2000);
 
   useEffect(() => {
     if (!streamId) {
@@ -49,7 +49,7 @@ export const useDetections = (streamId: string) => {
 export const useMultiDetections = (streamIds: string[]) => {
   const [detectionsByStream, setDetectionsByStream] = useState<Record<string, DetectionResult[]>>({});
   const [loadingByStream, setLoadingByStream] = useState<Record<string, boolean>>({});
-  const pollMs = Number(import.meta.env.VITE_MULTI_DETECTIONS_POLL_MS || import.meta.env.VITE_DETECTIONS_POLL_MS || 250);
+  const pollMs = Number(import.meta.env.VITE_MULTI_DETECTIONS_POLL_MS || import.meta.env.VITE_DETECTIONS_POLL_MS || 5000);
   const streamKey = streamIds.slice().sort().join('|');
 
   useEffect(() => {
@@ -142,7 +142,7 @@ export const useVideoStreams = () => {
       } finally {
         if (cancelled) return;
         setLoading(false);
-        timer = setTimeout(fetchStreams, 5000);
+        timer = setTimeout(fetchStreams, Number(import.meta.env.VITE_STREAMS_POLL_MS || 10000));
       }
     };
 
@@ -176,7 +176,7 @@ export const useHealthStatus = () => {
         setError(err instanceof Error ? err.message : 'Failed to check health');
       } finally {
         if (!cancelled) {
-          timer = setTimeout(checkHealth, 10000);
+          timer = setTimeout(checkHealth, Number(import.meta.env.VITE_HEALTH_POLL_MS || 30000));
         }
       }
     };
@@ -211,7 +211,7 @@ export const useVerifierStatus = () => {
         setError(err instanceof Error ? err.message : 'Failed to fetch verifier status');
       } finally {
         if (!cancelled) {
-          timer = setTimeout(fetchVerifierStatus, 5000);
+          timer = setTimeout(fetchVerifierStatus, Number(import.meta.env.VITE_VERIFIER_POLL_MS || 15000));
         }
       }
     };
