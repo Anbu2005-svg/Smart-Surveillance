@@ -346,7 +346,7 @@ class DetectionManager:
         self.process_fps = float(os.getenv("DETECTION_PROCESS_FPS", "8"))
         self.process_width = int(os.getenv("PROCESS_FRAME_WIDTH", "640"))
         self.process_height = int(os.getenv("PROCESS_FRAME_HEIGHT", "480"))
-        self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "416"))
+        self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "640"))
         self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
         self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "false").lower() == "true"
         self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "80"))
