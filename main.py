@@ -3300,6 +3300,11 @@ async def root():
         "health": "/api/health"
     }
 
+
+@app.head("/")
+async def root_head():
+    return Response(status_code=200)
+
 # ============= Main =============
 if __name__ == "__main__":
     uvicorn.run(
