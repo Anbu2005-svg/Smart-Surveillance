@@ -374,6 +374,9 @@ class DetectionManager:
         self.last_supabase_error = ""
         self.supabase_event_logging_enabled = os.getenv("SUPABASE_EVENT_LOGGING_ENABLED", "true").lower() == "true"
         self.supabase_detection_log_cooldown_sec = float(os.getenv("SUPABASE_DETECTION_LOG_COOLDOWN_SEC", "1.0"))
+        self.supabase_frame_storage_enabled = os.getenv("SUPABASE_FRAME_STORAGE_ENABLED", "true").lower() == "true"
+        self.supabase_store_empty_frames = os.getenv("SUPABASE_STORE_EMPTY_FRAMES", "false").lower() == "true"
+        self.supabase_detection_bucket = os.getenv("SUPABASE_DETECTION_BUCKET", "detected-images").strip() or "detected-images"
         self.last_detection_log_at = {}
         self.stream_alert_targets = {}
         self.stream_alert_targets_lock = threading.Lock()
@@ -757,6 +760,44 @@ class DetectionManager:
                     f"Create table or set SUPABASE_STREAMS_TABLE correctly (example: public.camera_streams)."
                 )
             raise
+
+    def upload_frame_to_supabase_storage(self, stream_id: str, frame_id: str, frame_bytes: bytes, has_detections: bool) -> Optional[str]:
+        if not (
+            self.supabase_frame_storage_enabled
+            and self.is_supabase_configured()
+            and frame_bytes
+            and (has_detections or self.supabase_store_empty_frames)
+        ):
+            return None
+
+        timestamp_path = datetime.utcnow().strftime("%Y/%m/%d")
+        safe_stream_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(stream_id))[:64] or "stream"
+        object_path = f"{safe_stream_id}/{timestamp_path}/{frame_id}.jpg"
+        encoded_path = "/".join(urllib_parse.quote(part, safe="") for part in object_path.split("/"))
+        bucket = urllib_parse.quote(self.supabase_detection_bucket, safe="")
+        upload_url = f"{self.supabase_url}/storage/v1/object/{bucket}/{encoded_path}"
+
+        headers = {
+            "apikey": self.supabase_service_role_key,
+            "Authorization": f"Bearer {self.supabase_service_role_key}",
+            "Content-Type": "image/jpeg",
+            "Cache-Control": "3600",
+            "x-upsert": "true",
+        }
+        req = urllib_request.Request(upload_url, data=frame_bytes, headers=headers, method="POST")
+        try:
+            with urllib_request.urlopen(req, timeout=self.supabase_timeout_sec) as response:
+                response.read()
+            public_url = (
+                f"{self.supabase_url}/storage/v1/object/public/"
+                f"{bucket}/{encoded_path}"
+            )
+            self.last_supabase_error = ""
+            return public_url
+        except Exception as e:
+            self.last_supabase_error = str(e)
+            logger.warning(f"Supabase frame upload failed: {e}")
+            return None
 
     def _stream_record(self, stream_id: str, stream_info: dict, include_input_metadata: bool = True) -> dict:
         record = {
@@ -1222,11 +1263,21 @@ class DetectionManager:
                 oldest = self.frame_order.pop(0)
                 self.frame_cache.pop(oldest, None)
 
+        image_url = f"/api/frames/{frame_id}.jpg"
+        storage_url = self.upload_frame_to_supabase_storage(
+            stream_id,
+            frame_id,
+            frame_bytes,
+            has_detections=bool(detection_objects),
+        )
+        if storage_url:
+            image_url = storage_url
+
         result = DetectionResult(
             frame_id=frame_id,
             timestamp=datetime.now().isoformat(),
             detections=detection_objects,
-            image_url=f"/api/frames/{frame_id}.jpg"
+            image_url=image_url
         )
         
         # Store in detections cache
@@ -3099,6 +3150,9 @@ async def supabase_status(user: dict = Depends(_require_api_user)):
         "fallback_file": str(detector.streams_store_path),
         "last_error": detector.last_supabase_error or None,
         "event_logging_enabled": detector.supabase_event_logging_enabled,
+        "frame_storage_enabled": detector.supabase_frame_storage_enabled,
+        "frame_storage_bucket": detector.supabase_detection_bucket,
+        "store_empty_frames": detector.supabase_store_empty_frames,
         "tables": {
             "streams": detector.supabase_streams_table,
             "camera_feeds": detector.supabase_camera_feeds_table,

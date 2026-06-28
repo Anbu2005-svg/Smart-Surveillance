@@ -1,6 +1,12 @@
 -- Run this once in Supabase SQL Editor
 -- It creates all tables used by this project.
 
+-- Public bucket used by the backend to store detected/annotated JPEG frames.
+-- The backend uploads with the service-role key; the frontend reads public URLs.
+insert into storage.buckets (id, name, public)
+values ('detected-images', 'detected-images', true)
+on conflict (id) do update set public = excluded.public;
+
 create table if not exists public.camera_streams (
   id text primary key,
   name text not null,
