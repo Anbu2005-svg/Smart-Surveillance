@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Camera, Webcam, RadioTower, FileVideo } from 'lucide-react';
 
 interface VideoInputModalProps {
@@ -31,6 +31,21 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   const [dragTarget, setDragTarget] = useState<'video_file' | 'image_file' | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const preventBrowserFileOpen = (event: DragEvent) => {
+      event.preventDefault();
+    };
+
+    window.addEventListener('dragover', preventBrowserFileOpen);
+    window.addEventListener('drop', preventBrowserFileOpen);
+    return () => {
+      window.removeEventListener('dragover', preventBrowserFileOpen);
+      window.removeEventListener('drop', preventBrowserFileOpen);
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -95,6 +110,17 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
     handleSelectedFile(selected, method);
   };
 
+  const handleDragTarget = (
+    event: React.DragEvent<HTMLElement>,
+    method: 'video_file' | 'image_file'
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedMethod(method);
+    setDragTarget(method);
+    setLocalError('');
+  };
+
   const getDropZoneClass = (method: 'video_file' | 'image_file') =>
     `block rounded border border-dashed px-3 py-4 text-center transition ${
       dragTarget === method
@@ -143,7 +169,11 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => e.preventDefault()}
+    >
       <div className="bg-gray-900 rounded-lg shadow-xl max-w-md w-full mx-4 border border-gray-700 max-h-[85vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
@@ -253,6 +283,9 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               setSelectedMethod('video_file');
               setLocalError('');
             }}
+            onDragEnter={(e) => handleDragTarget(e, 'video_file')}
+            onDragOver={(e) => handleDragTarget(e, 'video_file')}
+            onDrop={(e) => handleDroppedFile(e, 'video_file')}
             className={`p-4 rounded-lg cursor-pointer transition border-2 ${
               selectedMethod === 'video_file'
                 ? 'bg-blue-900 border-blue-500'
@@ -272,14 +305,10 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
                 videoInputRef.current?.click();
               }}
               onDragEnter={(e) => {
-                e.preventDefault();
-                setSelectedMethod('video_file');
-                setDragTarget('video_file');
+                handleDragTarget(e, 'video_file');
               }}
               onDragOver={(e) => {
-                e.preventDefault();
-                setSelectedMethod('video_file');
-                setDragTarget('video_file');
+                handleDragTarget(e, 'video_file');
               }}
               onDragLeave={() => setDragTarget(null)}
               onDrop={(e) => handleDroppedFile(e, 'video_file')}
@@ -309,6 +338,9 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               setSelectedMethod('image_file');
               setLocalError('');
             }}
+            onDragEnter={(e) => handleDragTarget(e, 'image_file')}
+            onDragOver={(e) => handleDragTarget(e, 'image_file')}
+            onDrop={(e) => handleDroppedFile(e, 'image_file')}
             className={`p-4 rounded-lg cursor-pointer transition border-2 ${
               selectedMethod === 'image_file'
                 ? 'bg-blue-900 border-blue-500'
@@ -328,14 +360,10 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
                 imageInputRef.current?.click();
               }}
               onDragEnter={(e) => {
-                e.preventDefault();
-                setSelectedMethod('image_file');
-                setDragTarget('image_file');
+                handleDragTarget(e, 'image_file');
               }}
               onDragOver={(e) => {
-                e.preventDefault();
-                setSelectedMethod('image_file');
-                setDragTarget('image_file');
+                handleDragTarget(e, 'image_file');
               }}
               onDragLeave={() => setDragTarget(null)}
               onDrop={(e) => handleDroppedFile(e, 'image_file')}
