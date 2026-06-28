@@ -175,14 +175,14 @@ export const Dashboard: React.FC = () => {
         });
 
         await detectionAPI.processBrowserFrame(streamId, blob, targetClasses);
-        session.timerId = window.setTimeout(captureFrame, 900);
+        session.timerId = window.setTimeout(captureFrame, 2000);
       } catch (error) {
         stopBrowserCameraSession(streamId);
         setActionError(getApiErrorMessage(error));
       }
     };
 
-    session.timerId = window.setTimeout(captureFrame, 250);
+    session.timerId = window.setTimeout(captureFrame, 750);
   };
 
   useEffect(() => {
