@@ -13,9 +13,20 @@ export const AuthCallbackPage = () => {
     const finishSignIn = async () => {
       try {
         const params = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
         const oauthError = params.get('error_description') || params.get('error');
         if (oauthError) {
           throw new Error(oauthError);
+        }
+
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (setSessionError) throw setSessionError;
         }
 
         const { data: currentSession, error: sessionError } = await supabase.auth.getSession();
@@ -32,6 +43,7 @@ export const AuthCallbackPage = () => {
         }
 
         if (!cancelled) {
+          window.history.replaceState({}, document.title, '/auth/callback');
           navigate('/dashboard', { replace: true });
         }
       } catch (err: any) {
