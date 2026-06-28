@@ -184,7 +184,7 @@ export const detectionAPI = {
     const formData = new FormData();
     formData.append('file', file);
     const headers = await getAuthHeaders();
-    const response = await apiClient.post('/upload-video', formData, {
+    const response = await axios.post(`${API_BASE_URL}/upload-video`, formData, {
       headers,
     });
     return response.data;
@@ -215,7 +215,7 @@ export const detectionAPI = {
       formData.append('target_classes', JSON.stringify(targetClasses));
     }
     const headers = await getAuthHeaders();
-    const response = await apiClient.post(`/process-browser-frame/${streamId}`, formData, {
+    const response = await axios.post(`${API_BASE_URL}/process-browser-frame/${streamId}`, formData, {
       headers,
       timeout: 30000,
     });
