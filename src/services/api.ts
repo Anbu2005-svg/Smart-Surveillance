@@ -111,6 +111,23 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
 };
 
 export const detectionAPI = {
+  // Wake Render's free/idle backend without blocking the UI.
+  wakeBackend: async (): Promise<void> => {
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await apiClient.get('/health', {
+          timeout: 60000,
+          params: { wake: Date.now() },
+        });
+        return;
+      } catch {
+        if (attempt === maxAttempts) return;
+        await new Promise((resolve) => window.setTimeout(resolve, attempt * 2000));
+      }
+    }
+  },
+
   // Get list of available video streams
   getVideoStreams: async (): Promise<VideoStream[]> => {
     const headers = await getAuthHeaders();

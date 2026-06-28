@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { AuthPage } from './pages/AuthPage';
@@ -7,9 +7,14 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { TelegramSetupPage } from './pages/TelegramSetupPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { TelegramSetupGuard } from './components/TelegramSetupGuard';
+import { detectionAPI } from './services/api';
 import './styles/globals.css';
 
 function App() {
+  useEffect(() => {
+    detectionAPI.wakeBackend();
+  }, []);
+
   return (
     <Router
       future={{
