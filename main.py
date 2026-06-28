@@ -191,7 +191,11 @@ default_cors_origins = (
     "https://smart-surveillance-frontend.onrender.com"
 )
 cors_origins_env = os.getenv("CORS_ORIGINS", default_cors_origins)
-cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+cors_origins = [
+    o.strip().strip('"').strip("'").rstrip("/")
+    for o in cors_origins_env.split(",")
+    if o.strip()
+]
 allow_any_origin = "*" in cors_origins or not cors_origins
 app.add_middleware(
     CORSMiddleware,
@@ -2817,6 +2821,5 @@ if __name__ == "__main__":
         reload=False,
         log_level="info"
     )
-
 
 
