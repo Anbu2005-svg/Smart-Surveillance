@@ -14,7 +14,11 @@ export const AuthCallbackPage = () => {
       try {
         const params = new URLSearchParams(window.location.search);
         const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-        const oauthError = params.get('error_description') || params.get('error');
+        const oauthError =
+          params.get('error_description') ||
+          hashParams.get('error_description') ||
+          params.get('error') ||
+          hashParams.get('error');
         if (oauthError) {
           throw new Error(oauthError);
         }
@@ -29,7 +33,7 @@ export const AuthCallbackPage = () => {
           if (setSessionError) throw setSessionError;
         }
 
-        const { data: currentSession, error: sessionError } = await supabase.auth.getSession();
+        let { data: currentSession, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
         if (!currentSession.session) {
@@ -40,6 +44,14 @@ export const AuthCallbackPage = () => {
 
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) throw exchangeError;
+
+          const { data: exchangedSession, error: exchangedSessionError } = await supabase.auth.getSession();
+          if (exchangedSessionError) throw exchangedSessionError;
+          currentSession = exchangedSession;
+        }
+
+        if (!currentSession.session) {
+          throw new Error('Google sign-in completed, but no session was created.');
         }
 
         if (!cancelled) {
