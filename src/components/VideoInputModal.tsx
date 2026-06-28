@@ -28,8 +28,48 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   const [classInput, setClassInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
+  const [dragTarget, setDragTarget] = useState<'video_file' | 'image_file' | null>(null);
 
   if (!isOpen) return null;
+
+  const handleDroppedFile = (
+    event: React.DragEvent<HTMLLabelElement>,
+    method: 'video_file' | 'image_file'
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTarget(null);
+    setSelectedMethod(method);
+
+    const selected = event.dataTransfer.files && event.dataTransfer.files.length > 0
+      ? event.dataTransfer.files[0]
+      : null;
+    if (!selected) return;
+
+    const isVideo = method === 'video_file';
+    const expectedType = isVideo ? 'video/' : 'image/';
+    if (!selected.type.startsWith(expectedType)) {
+      setLocalError(`Drop a valid ${isVideo ? 'video' : 'image'} file.`);
+      return;
+    }
+
+    if (isVideo) {
+      setVideoFile(selected);
+    } else {
+      setImageFile(selected);
+    }
+    setLocalError('');
+  };
+
+  const getDropZoneClass = (method: 'video_file' | 'image_file') =>
+    `block rounded border border-dashed px-3 py-4 text-center transition ${
+      dragTarget === method
+        ? 'border-blue-400 bg-blue-950/60'
+        : 'border-gray-600 bg-gray-700 hover:border-blue-400 hover:bg-gray-700/80'
+    }`;
+
+  const getFileLabel = (file: File | null, fallback: string) =>
+    file ? file.name : fallback;
 
   const handleConfirm = async () => {
     const sourceByMethod: Record<string, string> = {
@@ -188,21 +228,41 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               <FileVideo className="w-5 h-5 text-purple-400" />
               <span className="font-semibold text-white">Video File</span>
             </div>
-            <input
-              type="file"
-              accept="video/*"
-              onClick={() => {
+            <label
+              className={getDropZoneClass('video_file')}
+              onDragEnter={(e) => {
+                e.preventDefault();
                 setSelectedMethod('video_file');
-                setLocalError('');
+                setDragTarget('video_file');
               }}
-              onChange={(e) => {
+              onDragOver={(e) => {
+                e.preventDefault();
                 setSelectedMethod('video_file');
-                const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-                setVideoFile(selected);
-                setLocalError('');
+                setDragTarget('video_file');
               }}
-              className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
-            />
+              onDragLeave={() => setDragTarget(null)}
+              onDrop={(e) => handleDroppedFile(e, 'video_file')}
+            >
+              <span className="block text-sm font-medium text-white break-words">
+                {getFileLabel(videoFile, 'Choose or drag a video file here')}
+              </span>
+              <span className="block text-xs text-gray-400 mt-1">MP4, AVI, MOV, MKV, WEBM</span>
+              <input
+                type="file"
+                accept="video/*"
+                onClick={() => {
+                  setSelectedMethod('video_file');
+                  setLocalError('');
+                }}
+                onChange={(e) => {
+                  setSelectedMethod('video_file');
+                  const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                  setVideoFile(selected);
+                  setLocalError('');
+                }}
+                className="sr-only"
+              />
+            </label>
             <p className="text-xs text-gray-400 mt-2">Upload a video file from your system</p>
           </div>
 
@@ -222,21 +282,41 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               <Camera className="w-5 h-5 text-amber-400" />
               <span className="font-semibold text-white">Image File</span>
             </div>
-            <input
-              type="file"
-              accept="image/*"
-              onClick={() => {
+            <label
+              className={getDropZoneClass('image_file')}
+              onDragEnter={(e) => {
+                e.preventDefault();
                 setSelectedMethod('image_file');
-                setLocalError('');
+                setDragTarget('image_file');
               }}
-              onChange={(e) => {
+              onDragOver={(e) => {
+                e.preventDefault();
                 setSelectedMethod('image_file');
-                const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-                setImageFile(selected);
-                setLocalError('');
+                setDragTarget('image_file');
               }}
-              className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
-            />
+              onDragLeave={() => setDragTarget(null)}
+              onDrop={(e) => handleDroppedFile(e, 'image_file')}
+            >
+              <span className="block text-sm font-medium text-white break-words">
+                {getFileLabel(imageFile, 'Choose or drag an image file here')}
+              </span>
+              <span className="block text-xs text-gray-400 mt-1">JPG, PNG, WEBP, BMP</span>
+              <input
+                type="file"
+                accept="image/*"
+                onClick={() => {
+                  setSelectedMethod('image_file');
+                  setLocalError('');
+                }}
+                onChange={(e) => {
+                  setSelectedMethod('image_file');
+                  const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                  setImageFile(selected);
+                  setLocalError('');
+                }}
+                className="sr-only"
+              />
+            </label>
             <p className="text-xs text-gray-400 mt-2">Upload one image and run detection once</p>
           </div>
 
