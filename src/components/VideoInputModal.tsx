@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Camera, Webcam, RadioTower, FileVideo } from 'lucide-react';
+import { X, Camera, Webcam, RadioTower, FileVideo, ImageUp } from 'lucide-react';
 
 interface VideoInputModalProps {
   isOpen: boolean;
@@ -23,6 +23,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   const [webcamSource, setWebcamSource] = useState<string>('0');
   const [ipCameraSource, setIpCameraSource] = useState<string>('');
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [classMode, setClassMode] = useState<'all' | 'specific'>('all');
   const [classInput, setClassInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -36,6 +37,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
       webcam: webcamSource,
       ip_camera: ipCameraSource,
       video_file: videoFile?.name || '',
+      image_file: imageFile?.name || '',
     };
     const chosenSource = (sourceByMethod[selectedMethod] || '').trim();
     if (!chosenSource) {
@@ -59,7 +61,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
         return;
       }
 
-      await onConfirm(selectedMethod, chosenSource, targetClasses, videoFile);
+      await onConfirm(selectedMethod, chosenSource, targetClasses, selectedMethod === 'image_file' ? imageFile : videoFile);
     } finally {
       setIsSubmitting(false);
     }
@@ -202,6 +204,40 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
             />
             <p className="text-xs text-gray-400 mt-2">Upload a video file from your system</p>
+          </div>
+
+          {/* Image File Option */}
+          <div
+            onClick={() => {
+              setSelectedMethod('image_file');
+              setLocalError('');
+            }}
+            className={`p-4 rounded-lg cursor-pointer transition border-2 ${
+              selectedMethod === 'image_file'
+                ? 'bg-blue-900 border-blue-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-600'
+            }`}
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <ImageUp className="w-5 h-5 text-amber-400" />
+              <span className="font-semibold text-white">Image File</span>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              onClick={() => {
+                setSelectedMethod('image_file');
+                setLocalError('');
+              }}
+              onChange={(e) => {
+                setSelectedMethod('image_file');
+                const selected = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                setImageFile(selected);
+                setLocalError('');
+              }}
+              className="w-full bg-gray-700 text-white text-sm px-3 py-2 rounded border border-gray-600 focus:border-blue-500 outline-none"
+            />
+            <p className="text-xs text-gray-400 mt-2">Upload one image and run detection once</p>
           </div>
 
           {/* Class Selection */}

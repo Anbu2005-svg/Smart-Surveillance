@@ -222,6 +222,24 @@ export const detectionAPI = {
     return response.data;
   },
 
+  processImageFile: async (
+    streamId: string,
+    file: File,
+    targetClasses: string[] = []
+  ): Promise<DetectionResult> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (targetClasses.length > 0) {
+      formData.append('target_classes', JSON.stringify(targetClasses));
+    }
+    const headers = await getAuthHeaders();
+    const response = await axios.post(`${API_BASE_URL}/process-image/${streamId}`, formData, {
+      headers,
+      timeout: 60000,
+    });
+    return response.data;
+  },
+
   // Get health status of the backend
   getHealthStatus: async (): Promise<{ status: string; gpu_available: boolean }> => {
     const response = await apiClient.get('/health');

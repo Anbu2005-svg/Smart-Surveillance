@@ -195,7 +195,7 @@ export const Dashboard: React.FC = () => {
     inputMethod: string,
     inputSource: string,
     targetClasses: string[] = [],
-    videoFile: File | null = null
+    inputFile: File | null = null
   ) => {
     try {
       setActionError('');
@@ -208,11 +208,23 @@ export const Dashboard: React.FC = () => {
       }
 
       let resolvedSource = inputSource;
+      if (inputMethod === 'image_file') {
+        if (!inputFile) {
+          throw new Error('Select an image file to upload.');
+        }
+        stopBrowserCameraSession(selectedStreamForInput);
+        await detectionAPI.processImageFile(selectedStreamForInput, inputFile, targetClasses);
+        setShowVideoInputModal(false);
+        setSelectedStreamId(selectedStreamForInput);
+        setActiveView('monitor');
+        return;
+      }
+
       if (inputMethod === 'video_file') {
-        if (!videoFile) {
+        if (!inputFile) {
           throw new Error('Select a video file to upload.');
         }
-        const uploaded = await detectionAPI.uploadVideoFile(videoFile);
+        const uploaded = await detectionAPI.uploadVideoFile(inputFile);
         resolvedSource = uploaded.stored_path;
       }
       await detectionAPI.startDetectionWithInput(
