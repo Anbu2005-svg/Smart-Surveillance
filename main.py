@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
@@ -2568,6 +2568,61 @@ async def upload_video(file: UploadFile = File(...), user: dict = Depends(_requi
     finally:
         await file.close()
 
+@app.post("/api/process-browser-frame/{stream_id}", response_model=DetectionResult)
+async def process_browser_frame(
+    stream_id: str,
+    file: UploadFile = File(...),
+    target_classes: Optional[str] = Form(default=None),
+    user: dict = Depends(_require_api_user),
+):
+    """Process one frame captured by the user's browser camera."""
+    stream_id = _validate_stream_id(stream_id)
+    if stream_id not in detector.streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    try:
+        frame_bytes = await file.read()
+        if not frame_bytes:
+            raise HTTPException(status_code=400, detail="Browser camera frame is empty")
+        max_bytes = int(os.getenv("MAX_BROWSER_FRAME_SIZE_MB", "8")) * 1024 * 1024
+        if len(frame_bytes) > max_bytes:
+            raise HTTPException(status_code=413, detail="Browser camera frame is too large")
+
+        encoded = np.frombuffer(frame_bytes, np.uint8)
+        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Browser camera frame could not be decoded")
+
+        parsed_classes = []
+        if target_classes:
+            raw_value = str(target_classes).strip()
+            try:
+                loaded = json.loads(raw_value)
+                if isinstance(loaded, list):
+                    parsed_classes = [str(item) for item in loaded]
+                else:
+                    parsed_classes = [raw_value]
+            except json.JSONDecodeError:
+                parsed_classes = [item.strip() for item in raw_value.split(",") if item.strip()]
+
+        detector.streams[stream_id]["source"] = "browser_camera"
+        detector.streams[stream_id]["input_method"] = "browser_camera"
+        detector.streams[stream_id]["target_classes"] = _normalize_target_classes(parsed_classes)
+        detector.streams[stream_id]["status"] = "active"
+        _apply_stream_alert_target_for_user(stream_id, user)
+
+        result = detector.process_frame(stream_id, frame)
+        if result is None:
+            raise HTTPException(status_code=500, detail="Processing failed")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Browser frame processing failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process browser camera frame")
+    finally:
+        await file.close()
+
 @app.get("/api/statistics", response_model=Statistics)
 async def get_statistics(user: dict = Depends(_require_api_user)):
     """Get detection statistics"""
@@ -2821,5 +2876,3 @@ if __name__ == "__main__":
         reload=False,
         log_level="info"
     )
-
-
