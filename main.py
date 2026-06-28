@@ -2693,6 +2693,76 @@ async def process_browser_frame(
         if frame_file and frame_file is not file:
             await frame_file.close()
 
+@app.post("/api/process-image/{stream_id}", response_model=DetectionResult)
+async def process_uploaded_image(
+    stream_id: str,
+    file: UploadFile = File(...),
+    target_classes: Optional[str] = Form(default=None),
+    user: dict = Depends(_require_api_user),
+):
+    """Process one uploaded image and return detections plus annotated frame."""
+    stream_id = _validate_stream_id(stream_id)
+    if stream_id not in detector.streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    try:
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="Image file is required")
+
+        suffix = Path(file.filename).suffix.lower()
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        if suffix and suffix not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported image type '{suffix}'. Allowed: {sorted(allowed_extensions)}",
+            )
+
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded image is empty")
+
+        max_bytes = int(os.getenv("MAX_IMAGE_UPLOAD_SIZE_MB", "12")) * 1024 * 1024
+        if len(image_bytes) > max_bytes:
+            raise HTTPException(status_code=413, detail="Uploaded image is too large")
+
+        encoded = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Uploaded image could not be decoded")
+        frame = cv2.resize(frame, (detector.process_width, detector.process_height))
+
+        parsed_classes = []
+        if target_classes:
+            raw_value = str(target_classes).strip()
+            try:
+                loaded = json.loads(raw_value)
+                if isinstance(loaded, list):
+                    parsed_classes = [str(item) for item in loaded]
+                else:
+                    parsed_classes = [raw_value]
+            except json.JSONDecodeError:
+                parsed_classes = [item.strip() for item in raw_value.split(",") if item.strip()]
+
+        detector.streams[stream_id]["source"] = Path(file.filename).name
+        detector.streams[stream_id]["input_method"] = "image_file"
+        detector.streams[stream_id]["target_classes"] = _normalize_target_classes(parsed_classes)
+        detector.streams[stream_id]["status"] = "active"
+        _apply_stream_alert_target_for_user(stream_id, user)
+
+        result = detector.process_frame(stream_id, frame)
+        if result is None:
+            raise HTTPException(status_code=500, detail="Image processing failed")
+
+        logger.info(f"Image processed for {stream_id}: {len(result.detections)} detections")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image processing failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process uploaded image")
+    finally:
+        await file.close()
+
 @app.get("/api/statistics", response_model=Statistics)
 async def get_statistics(user: dict = Depends(_require_api_user)):
     """Get detection statistics"""
