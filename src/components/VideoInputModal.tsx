@@ -31,6 +31,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   const [dragTarget, setDragTarget] = useState<'video_file' | 'image_file' | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -58,6 +59,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
       : [];
 
   const submitSelectedFile = async (selected: File, method: 'video_file' | 'image_file') => {
+    if (uploadInFlightRef.current) return;
     const targetClasses = getTargetClasses();
     if (classMode === 'specific' && targetClasses.length === 0) {
       setLocalError('Enter at least one class (comma-separated) for specific mode.');
@@ -65,16 +67,18 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
     }
 
     setLocalError('');
+    uploadInFlightRef.current = true;
     setIsSubmitting(true);
     try {
       await onConfirm(method, selected.name, targetClasses, selected);
     } finally {
+      uploadInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
 
   const handleSelectedFile = (selected: File | null, method: 'video_file' | 'image_file') => {
-    if (!selected) return;
+    if (!selected || uploadInFlightRef.current) return;
 
     setSelectedMethod(method);
     const isVideo = method === 'video_file';
@@ -139,6 +143,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   };
 
   const handleConfirm = async () => {
+    if (uploadInFlightRef.current) return;
     const sourceByMethod: Record<string, string> = {
       browser_camera: 'browser_camera',
       webcam: webcamSource,
@@ -153,6 +158,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
     }
 
     setLocalError('');
+    uploadInFlightRef.current = true;
     setIsSubmitting(true);
     try {
       const targetClasses = getTargetClasses();
@@ -164,6 +170,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
       await onConfirm(selectedMethod, chosenSource, targetClasses, selectedMethod === 'image_file' ? imageFile : videoFile);
     } finally {
+      uploadInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
