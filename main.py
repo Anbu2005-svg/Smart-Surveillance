@@ -355,6 +355,7 @@ class DetectionManager:
         self.frame_cache = {}
         self.frame_order = []
         self.frame_cache_lock = threading.Lock()
+        self.inference_lock = threading.Lock()
         self.streams_store_path = Path(os.getenv("STREAMS_STORE_PATH", "streams_store.json"))
         self.streams_store_lock = threading.Lock()
         self.supabase_url = os.getenv("SUPABASE_URL", "").strip().strip('"').strip("'").rstrip("/")
@@ -1241,7 +1242,14 @@ class DetectionManager:
             return None
         
         # Run detection
-        detections, annotated_frame = self.detect_objects(frame, stream_id=stream_id)
+        lock_timeout = float(os.getenv("INFERENCE_LOCK_TIMEOUT_SEC", "45"))
+        if not self.inference_lock.acquire(timeout=lock_timeout):
+            logger.warning(f"Inference is busy; skipping frame for {stream_id}")
+            return None
+        try:
+            detections, annotated_frame = self.detect_objects(frame, stream_id=stream_id)
+        finally:
+            self.inference_lock.release()
         
         # Create detection objects
         detection_objects = [
