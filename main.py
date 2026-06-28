@@ -10,7 +10,6 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 import json
-import torch
 import time
 import logging
 import threading
@@ -25,9 +24,6 @@ from urllib import parse as urllib_parse
 from urllib import error as urllib_error
 from dotenv import load_dotenv
 import onnxruntime as ort
-
-# Import YOLO model
-from ultralytics import YOLO
 
 # Pydantic models
 from pydantic import BaseModel
@@ -348,10 +344,10 @@ class DetectionManager:
         self.process_width = int(os.getenv("PROCESS_FRAME_WIDTH", "640"))
         self.process_height = int(os.getenv("PROCESS_FRAME_HEIGHT", "480"))
         self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "640"))
-        self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
+        self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "55"))
         self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "false").lower() == "true"
-        self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "80"))
-        self.detections_history_size = int(os.getenv("DETECTIONS_HISTORY_SIZE", "6"))
+        self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "4"))
+        self.detections_history_size = int(os.getenv("DETECTIONS_HISTORY_SIZE", "2"))
         self.frame_cache = {}
         self.frame_order = []
         self.frame_cache_lock = threading.Lock()
@@ -415,7 +411,10 @@ class DetectionManager:
             logger.info("Loading YOLO model")
             logger.info("=" * 60)
 
-            cuda_available = torch.cuda.is_available()
+            cuda_available = False
+            if not self.use_direct_onnx:
+                import torch
+                cuda_available = torch.cuda.is_available()
             if self.requested_device == "cuda":
                 self.device = "cuda:0" if cuda_available else "cpu"
             elif self.requested_device == "cpu":
@@ -477,6 +476,7 @@ class DetectionManager:
                 self.model = None
                 logger.info("Using direct ONNX Runtime inference")
             else:
+                from ultralytics import YOLO
                 self.model = YOLO(str(model_candidate))
             self.model_info["model_name"] = model_candidate.name
             self.model_info["format"] = model_candidate.suffix.replace(".", "").upper() or "PT"
@@ -537,6 +537,7 @@ class DetectionManager:
             self.model = None
             logger.info("Using direct ONNX Runtime inference for fallback model")
         else:
+            from ultralytics import YOLO
             self.model = YOLO(str(self.loaded_model_path))
         self.model_info["model_name"] = self.loaded_model_path.name
         self.model_info["format"] = self.loaded_model_path.suffix.replace(".", "").upper() or "PT"
@@ -719,7 +720,13 @@ class DetectionManager:
 
     def get_gpu_status(self) -> bool:
         """Check GPU availability"""
-        return torch.cuda.is_available()
+        if self.use_direct_onnx:
+            return False
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except Exception:
+            return False
     
     def is_supabase_configured(self) -> bool:
         return bool(self.supabase_url) and bool(self.supabase_service_role_key)
@@ -2984,7 +2991,7 @@ async def process_uploaded_image(
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None:
             raise HTTPException(status_code=400, detail="Uploaded image could not be decoded")
-        image_max_dim = int(os.getenv("IMAGE_PROCESS_MAX_DIM", "1280"))
+        image_max_dim = int(os.getenv("IMAGE_PROCESS_MAX_DIM", "640"))
         image_height, image_width = frame.shape[:2]
         largest_dim = max(image_width, image_height)
         if largest_dim > image_max_dim:
@@ -3115,6 +3122,14 @@ async def process_frame(stream_id: str, user: dict = Depends(_require_api_user))
 @app.get("/api/info")
 async def get_info(user: dict = Depends(_require_api_user)):
     """Get API information"""
+    pytorch_version = None
+    if not detector.use_direct_onnx:
+        try:
+            import torch
+            pytorch_version = torch.__version__
+        except Exception:
+            pytorch_version = "unavailable"
+
     return {
         "name": "CCTV Detection API",
         "version": "1.0.0",
@@ -3156,8 +3171,8 @@ async def get_info(user: dict = Depends(_require_api_user)):
         },
         "frameworks": {
             "fastapi": "0.104.1",
-            "ultralytics": "latest",
-            "pytorch": torch.__version__,
+            "ultralytics": "lazy-loaded" if detector.use_direct_onnx else "latest",
+            "pytorch": pytorch_version,
             "opencv": cv2.__version__
         }
     }
