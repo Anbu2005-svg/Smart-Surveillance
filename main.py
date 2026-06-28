@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
@@ -2571,7 +2571,9 @@ async def upload_video(file: UploadFile = File(...), user: dict = Depends(_requi
 @app.post("/api/process-browser-frame/{stream_id}", response_model=DetectionResult)
 async def process_browser_frame(
     stream_id: str,
-    file: UploadFile = File(...),
+    request: Request,
+    file: Optional[UploadFile] = File(default=None),
+    frame: Optional[UploadFile] = File(default=None),
     target_classes: Optional[str] = Form(default=None),
     user: dict = Depends(_require_api_user),
 ):
@@ -2581,7 +2583,11 @@ async def process_browser_frame(
         raise HTTPException(status_code=404, detail="Stream not found")
 
     try:
-        frame_bytes = await file.read()
+        upload = file or frame
+        if upload:
+            frame_bytes = await upload.read()
+        else:
+            frame_bytes = await request.body()
         if not frame_bytes:
             raise HTTPException(status_code=400, detail="Browser camera frame is empty")
         max_bytes = int(os.getenv("MAX_BROWSER_FRAME_SIZE_MB", "8")) * 1024 * 1024
@@ -2621,7 +2627,10 @@ async def process_browser_frame(
         logger.error(f"Browser frame processing failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to process browser camera frame")
     finally:
-        await file.close()
+        if file:
+            await file.close()
+        if frame and frame is not file:
+            await frame.close()
 
 @app.get("/api/statistics", response_model=Statistics)
 async def get_statistics(user: dict = Depends(_require_api_user)):
