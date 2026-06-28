@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Webcam, RadioTower, FileVideo } from 'lucide-react';
+import { X, Camera, Webcam, RadioTower, FileVideo } from 'lucide-react';
 
 interface VideoInputModalProps {
   isOpen: boolean;
@@ -19,7 +19,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
   onConfirm,
   onCancel,
 }) => {
-  const [selectedMethod, setSelectedMethod] = useState<string>('webcam');
+  const [selectedMethod, setSelectedMethod] = useState<string>('browser_camera');
   const [webcamSource, setWebcamSource] = useState<string>('0');
   const [ipCameraSource, setIpCameraSource] = useState<string>('');
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -32,6 +32,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
   const handleConfirm = async () => {
     const sourceByMethod: Record<string, string> = {
+      browser_camera: 'browser_camera',
       webcam: webcamSource,
       ip_camera: ipCameraSource,
       video_file: videoFile?.name || '',
@@ -80,6 +81,27 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-4 overflow-y-auto max-h-[60vh] pr-2">
+          {/* Browser Camera Option */}
+          <div
+            onClick={() => {
+              setSelectedMethod('browser_camera');
+              setLocalError('');
+            }}
+            className={`p-4 rounded-lg cursor-pointer transition border-2 ${
+              selectedMethod === 'browser_camera'
+                ? 'bg-blue-900 border-blue-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-600'
+            }`}
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <Camera className="w-5 h-5 text-cyan-400" />
+              <span className="font-semibold text-white">Device Camera</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              Use this browser's camera after granting permission.
+            </p>
+          </div>
+
           {/* Webcam Option */}
           <div
             onClick={() => {

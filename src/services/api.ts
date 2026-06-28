@@ -187,6 +187,24 @@ export const detectionAPI = {
     return response.data;
   },
 
+  processBrowserFrame: async (
+    streamId: string,
+    frame: Blob,
+    targetClasses: string[] = []
+  ): Promise<DetectionResult> => {
+    const formData = new FormData();
+    formData.append('file', frame, `browser-frame-${Date.now()}.jpg`);
+    if (targetClasses.length > 0) {
+      formData.append('target_classes', JSON.stringify(targetClasses));
+    }
+    const headers = await getAuthHeaders();
+    const response = await apiClient.post(`/process-browser-frame/${streamId}`, formData, {
+      headers,
+      timeout: 30000,
+    });
+    return response.data;
+  },
+
   // Get health status of the backend
   getHealthStatus: async (): Promise<{ status: string; gpu_available: boolean }> => {
     const response = await apiClient.get('/health');

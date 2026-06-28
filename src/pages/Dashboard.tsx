@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar } from '../components/StatusBar';
 import { VideoFeed } from '../components/VideoFeed';
 import { DetectionPanel } from '../components/DetectionPanel';
@@ -8,6 +8,14 @@ import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus, us
 import { Activity, Flame, Play, ShieldAlert, Square, UserRound } from 'lucide-react';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
 import type { DetectionResult, VideoStream } from '../services/api';
+
+interface BrowserCameraSession {
+  mediaStream: MediaStream;
+  video: HTMLVideoElement;
+  canvas: HTMLCanvasElement;
+  stopped: boolean;
+  timerId?: number;
+}
 
 const getStreamFps = (history: DetectionResult[]): number => {
   if (!history || history.length < 2) return 0;
@@ -30,6 +38,7 @@ export const Dashboard: React.FC = () => {
   const [creatingStream, setCreatingStream] = useState(false);
   const [actionError, setActionError] = useState('');
   const [gridColumns, setGridColumns] = useState(2);
+  const browserCameraSessionsRef = useRef<Record<string, BrowserCameraSession>>({});
   const { detections, loading: detectionsLoading } = useDetections(selectedStreamId);
 
   const activeStreamList = useMemo(
@@ -57,6 +66,94 @@ export const Dashboard: React.FC = () => {
     setShowVideoInputModal(true);
   };
 
+  const stopBrowserCameraSession = (streamId: string) => {
+    const session = browserCameraSessionsRef.current[streamId];
+    if (!session) return;
+    session.stopped = true;
+    if (session.timerId) {
+      window.clearTimeout(session.timerId);
+    }
+    session.mediaStream.getTracks().forEach((track) => track.stop());
+    session.video.srcObject = null;
+    delete browserCameraSessionsRef.current[streamId];
+  };
+
+  const startBrowserCameraDetection = async (
+    streamId: string,
+    targetClasses: string[] = []
+  ) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('This browser does not support device camera access.');
+    }
+
+    stopBrowserCameraSession(streamId);
+
+    let mediaStream: MediaStream;
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+    } catch {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+    }
+
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = mediaStream;
+    await video.play();
+
+    const canvas = document.createElement('canvas');
+    const session: BrowserCameraSession = {
+      mediaStream,
+      video,
+      canvas,
+      stopped: false,
+    };
+    browserCameraSessionsRef.current[streamId] = session;
+
+    const captureFrame = async () => {
+      if (session.stopped) return;
+
+      try {
+        const width = video.videoWidth || 640;
+        const height = video.videoHeight || 480;
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          throw new Error('Unable to prepare camera frame.');
+        }
+        context.drawImage(video, 0, 0, width, height);
+
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((frameBlob) => {
+            if (frameBlob) resolve(frameBlob);
+            else reject(new Error('Unable to capture camera frame.'));
+          }, 'image/jpeg', 0.78);
+        });
+
+        await detectionAPI.processBrowserFrame(streamId, blob, targetClasses);
+        session.timerId = window.setTimeout(captureFrame, 900);
+      } catch (error) {
+        stopBrowserCameraSession(streamId);
+        setActionError(getApiErrorMessage(error));
+      }
+    };
+
+    session.timerId = window.setTimeout(captureFrame, 250);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.keys(browserCameraSessionsRef.current).forEach(stopBrowserCameraSession);
+    };
+  }, []);
+
   const handleVideoInputConfirm = async (
     inputMethod: string,
     inputSource: string,
@@ -65,6 +162,14 @@ export const Dashboard: React.FC = () => {
   ) => {
     try {
       setActionError('');
+      if (inputMethod === 'browser_camera') {
+        await startBrowserCameraDetection(selectedStreamForInput, targetClasses);
+        setShowVideoInputModal(false);
+        setSelectedStreamId(selectedStreamForInput);
+        setActiveView('monitor');
+        return;
+      }
+
       let resolvedSource = inputSource;
       if (inputMethod === 'video_file') {
         if (!videoFile) {
@@ -90,6 +195,7 @@ export const Dashboard: React.FC = () => {
   const handleStopDetection = async (streamId: string) => {
     try {
       setActionError('');
+      stopBrowserCameraSession(streamId);
       await detectionAPI.stopDetection(streamId);
     } catch (error) {
       setActionError(getApiErrorMessage(error));
