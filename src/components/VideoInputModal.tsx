@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Camera, Webcam, RadioTower, FileVideo, ImageUp } from 'lucide-react';
+import { X, Camera, Webcam, RadioTower, FileVideo } from 'lucide-react';
 
 interface VideoInputModalProps {
   isOpen: boolean;
@@ -219,7 +219,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
             }`}
           >
             <div className="flex items-center gap-3 mb-3">
-              <ImageUp className="w-5 h-5 text-amber-400" />
+              <Camera className="w-5 h-5 text-amber-400" />
               <span className="font-semibold text-white">Image File</span>
             </div>
             <input
