@@ -415,6 +415,18 @@ class DetectionManager:
                 logger.warning(f"Configured model not found: {self.model_path}, falling back to yolov11n.pt")
                 model_candidate = Path("yolov11n.pt")
 
+            prefer_quantized = os.getenv("PREFER_QUANTIZED_MODEL", "true").lower() == "true"
+            if prefer_quantized and model_candidate.suffix.lower() == ".onnx":
+                quantized_candidates = [
+                    model_candidate.with_name(f"{model_candidate.stem}-int8{model_candidate.suffix}"),
+                    Path("CCTV") / "best-int8.onnx",
+                ]
+                for quantized_candidate in quantized_candidates:
+                    if quantized_candidate.exists():
+                        logger.info(f"Using quantized ONNX model: {quantized_candidate}")
+                        model_candidate = quantized_candidate
+                        break
+
             self.model = YOLO(str(model_candidate))
             self.model_info["model_name"] = model_candidate.name
             self.model_info["format"] = model_candidate.suffix.replace(".", "").upper() or "PT"
