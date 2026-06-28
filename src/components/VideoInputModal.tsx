@@ -34,6 +34,30 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
   if (!isOpen) return null;
 
+  const getTargetClasses = () =>
+    classMode === 'specific'
+      ? classInput
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i)
+      : [];
+
+  const submitSelectedFile = async (selected: File, method: 'video_file' | 'image_file') => {
+    const targetClasses = getTargetClasses();
+    if (classMode === 'specific' && targetClasses.length === 0) {
+      setLocalError('Enter at least one class (comma-separated) for specific mode.');
+      return;
+    }
+
+    setLocalError('');
+    setIsSubmitting(true);
+    try {
+      await onConfirm(method, selected.name, targetClasses, selected);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSelectedFile = (selected: File | null, method: 'video_file' | 'image_file') => {
     if (!selected) return;
 
@@ -52,6 +76,9 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
       setImageFile(selected);
     }
     setLocalError('');
+    if (method === 'image_file') {
+      void submitSelectedFile(selected, method);
+    }
   };
 
   const handleDroppedFile = (
@@ -80,7 +107,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
   const getSubmitLabel = () => {
     if (isSubmitting) return selectedMethod === 'image_file' ? 'Uploading...' : 'Starting...';
-    if (selectedMethod === 'image_file') return 'Upload & Detect';
+    if (selectedMethod === 'image_file') return imageFile ? 'Detect Again' : 'Choose Image';
     if (selectedMethod === 'video_file') return 'Upload & Start';
     return 'Start Detection';
   };
@@ -102,13 +129,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
     setLocalError('');
     setIsSubmitting(true);
     try {
-      const targetClasses =
-        classMode === 'specific'
-          ? classInput
-              .split(',')
-              .map((s) => s.trim().toLowerCase())
-              .filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i)
-          : [];
+      const targetClasses = getTargetClasses();
 
       if (classMode === 'specific' && targetClasses.length === 0) {
         setLocalError('Enter at least one class (comma-separated) for specific mode.');
