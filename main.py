@@ -334,7 +334,7 @@ class DetectionManager:
         self.requested_device = os.getenv("DEVICE", "auto").strip().lower()
         self.device = "cpu"
         self.model_path = os.getenv("MODEL_PATH", "best (1).onnx").strip().strip('"').strip("'")
-        self.conf_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
+        self.conf_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", "0.25"))
         self.fire_conf_threshold = float(os.getenv("FIRE_CONFIDENCE_THRESHOLD", str(self.conf_threshold)))
         self.weapon_conf_threshold = float(os.getenv("WEAPON_CONFIDENCE_THRESHOLD", str(self.conf_threshold)))
         self.use_half_precision = os.getenv("USE_HALF_PRECISION", "true").lower() == "true"
@@ -418,6 +418,15 @@ class DetectionManager:
                 model_candidate = Path("yolov11n.pt")
 
             original_model_candidate = model_candidate
+            if model_candidate.suffix.lower() == ".onnx" and model_candidate.stem.endswith("-int8"):
+                possible_fp32 = model_candidate.with_name(
+                    f"{model_candidate.stem[:-5]}{model_candidate.suffix}"
+                )
+                if possible_fp32.exists():
+                    original_model_candidate = possible_fp32
+                elif (Path("CCTV") / "best.onnx").exists():
+                    original_model_candidate = Path("CCTV") / "best.onnx"
+
             prefer_quantized = os.getenv("PREFER_QUANTIZED_MODEL", "true").lower() == "true"
             if prefer_quantized and model_candidate.suffix.lower() == ".onnx":
                 quantized_candidates = [
@@ -2752,6 +2761,15 @@ async def process_uploaded_image(
         result = detector.process_frame(stream_id, frame)
         if result is None:
             raise HTTPException(status_code=500, detail="Image processing failed")
+        if (
+            len(result.detections) == 0
+            and os.getenv("RETRY_IMAGE_WITH_FALLBACK_MODEL", "true").lower() == "true"
+            and detector._reload_fallback_model()
+        ):
+            logger.warning("Quantized model returned zero image detections; retrying with fallback ONNX model.")
+            result = detector.process_frame(stream_id, frame)
+            if result is None:
+                raise HTTPException(status_code=500, detail="Image processing failed")
 
         logger.info(f"Image processed for {stream_id}: {len(result.detections)} detections")
         return result
