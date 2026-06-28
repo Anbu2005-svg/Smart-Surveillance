@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DetectionResult } from '../services/api';
 import { formatTimestamp } from '../utils/helpers';
 import { Eye, RefreshCw } from 'lucide-react';
@@ -9,6 +9,7 @@ interface VideoFeedProps {
   isLoading: boolean;
   streamId?: string;
   isStreamActive?: boolean;
+  localStream?: MediaStream | null;
 }
 
 export const VideoFeed: React.FC<VideoFeedProps> = ({
@@ -16,14 +17,34 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({
   isLoading,
   streamId: _streamId,
   isStreamActive = false,
+  localStream = null,
 }) => {
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const displayedResult = detectionResult;
+
+  useEffect(() => {
+    if (!localVideoRef.current) return;
+    localVideoRef.current.srcObject = localStream;
+  }, [localStream]);
 
   return (
     <div className="bg-gray-800 rounded-lg overflow-hidden shadow-lg">
       <div className="aspect-video bg-black relative">
-        {isLoading ? (
+        {localStream ? (
+          <div className="relative w-full h-full">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            />
+            <div className="absolute left-3 top-3 rounded bg-black/60 px-2 py-1 text-xs text-cyan-100">
+              Device camera live
+            </div>
+          </div>
+        ) : isLoading ? (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
             <div className="text-center">
               <div className="w-12 h-12 border-4 border-gray-600 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>

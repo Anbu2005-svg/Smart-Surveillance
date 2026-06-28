@@ -25,6 +25,21 @@ const getStreamFps = (history: DetectionResult[]): number => {
   return 1000 / (current - prev);
 };
 
+const getCameraErrorMessage = (error: unknown): string => {
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+      return 'Camera permission was blocked. Allow camera access in the browser site settings and try again.';
+    }
+    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+      return 'No device camera was found on this browser/device.';
+    }
+    if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+      return 'Camera is already in use by another app or browser tab.';
+    }
+  }
+  return error instanceof Error ? error.message : 'Unable to open device camera.';
+};
+
 export const Dashboard: React.FC = () => {
   const { streams, loading: streamsLoading } = useVideoStreams();
   const { health } = useHealthStatus();
@@ -38,6 +53,7 @@ export const Dashboard: React.FC = () => {
   const [creatingStream, setCreatingStream] = useState(false);
   const [actionError, setActionError] = useState('');
   const [gridColumns, setGridColumns] = useState(2);
+  const [browserCameraStreams, setBrowserCameraStreams] = useState<Record<string, MediaStream>>({});
   const browserCameraSessionsRef = useRef<Record<string, BrowserCameraSession>>({});
   const { detections, loading: detectionsLoading } = useDetections(selectedStreamId);
 
@@ -76,6 +92,11 @@ export const Dashboard: React.FC = () => {
     session.mediaStream.getTracks().forEach((track) => track.stop());
     session.video.srcObject = null;
     delete browserCameraSessionsRef.current[streamId];
+    setBrowserCameraStreams((current) => {
+      const next = { ...current };
+      delete next[streamId];
+      return next;
+    });
   };
 
   const startBrowserCameraDetection = async (
@@ -94,18 +115,34 @@ export const Dashboard: React.FC = () => {
         video: { facingMode: { ideal: 'environment' } },
         audio: false,
       });
-    } catch {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false,
-      });
+    } catch (error) {
+      if (error instanceof DOMException && ['NotAllowedError', 'SecurityError', 'NotFoundError'].includes(error.name)) {
+        throw new Error(getCameraErrorMessage(error));
+      }
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      } catch (fallbackError) {
+        throw new Error(getCameraErrorMessage(fallbackError));
+      }
     }
 
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
+    video.autoplay = true;
     video.srcObject = mediaStream;
+    await new Promise<void>((resolve) => {
+      if (video.readyState >= 2) {
+        resolve();
+        return;
+      }
+      video.onloadedmetadata = () => resolve();
+    });
     await video.play();
+    setBrowserCameraStreams((current) => ({ ...current, [streamId]: mediaStream }));
 
     const canvas = document.createElement('canvas');
     const session: BrowserCameraSession = {
@@ -514,6 +551,7 @@ export const Dashboard: React.FC = () => {
                     isLoading={detectionsLoading}
                     streamId={selectedStreamId}
                     isStreamActive={selectedStream?.status === 'active'}
+                    localStream={browserCameraStreams[selectedStreamId] || null}
                   />
                 </div>
                 <div className="glass-panel rounded-xl p-4">
