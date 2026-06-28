@@ -638,6 +638,18 @@ class DetectionManager:
         prediction = prediction[candidate_mask]
         class_ids = class_ids[candidate_mask]
         confidences = confidences[candidate_mask]
+        if prediction.size == 0 and os.getenv("LOG_EMPTY_DETECTION_SCORES", "true").lower() == "true":
+            top_indices = np.argsort(class_scores.max(axis=1))[-5:][::-1]
+            top_scores = []
+            for index in top_indices:
+                top_class_id = int(np.argmax(class_scores[index]))
+                top_class = self.class_names[top_class_id] if top_class_id < len(self.class_names) else str(top_class_id)
+                top_scores.append(f"{top_class}:{float(class_scores[index][top_class_id]):.4f}")
+            logger.info(
+                "ONNX produced no candidates above threshold %.4f. Top raw scores: %s",
+                min(self.conf_threshold, self.fire_conf_threshold, self.weapon_conf_threshold),
+                ", ".join(top_scores),
+            )
 
         boxes_for_nms = []
         candidates = []
@@ -666,6 +678,8 @@ class DetectionManager:
 
         if not candidates:
             self.model_info["inference_time"] = time.time() - start_time
+            if os.getenv("LOG_EMPTY_DETECTION_SCORES", "true").lower() == "true":
+                logger.info("ONNX candidates were filtered out by class target/confidence thresholds.")
             return [], frame
 
         nms_indices = cv2.dnn.NMSBoxes(
@@ -676,6 +690,7 @@ class DetectionManager:
         )
         if len(nms_indices) == 0:
             self.model_info["inference_time"] = time.time() - start_time
+            logger.info("ONNX candidates were removed by NMS.")
             return [], frame
 
         detections = []
@@ -2991,18 +3006,34 @@ async def process_uploaded_image(
         _apply_stream_alert_target_for_user(stream_id, user)
 
         detector.use_fallback_model_for_image_uploads()
-        result = detector.process_frame(stream_id, frame)
-        if result is None:
-            raise HTTPException(status_code=500, detail="Image processing failed")
-        if (
-            len(result.detections) == 0
-            and os.getenv("RETRY_IMAGE_WITH_FALLBACK_MODEL", "true").lower() == "true"
-            and detector._reload_fallback_model()
-        ):
-            logger.warning("Quantized model returned zero image detections; retrying with fallback ONNX model.")
+        image_confidence = float(os.getenv("IMAGE_CONFIDENCE_THRESHOLD", "0.05"))
+        previous_thresholds = (
+            detector.conf_threshold,
+            detector.fire_conf_threshold,
+            detector.weapon_conf_threshold,
+        )
+        try:
+            detector.conf_threshold = image_confidence
+            detector.fire_conf_threshold = float(os.getenv("IMAGE_FIRE_CONFIDENCE_THRESHOLD", str(image_confidence)))
+            detector.weapon_conf_threshold = float(os.getenv("IMAGE_WEAPON_CONFIDENCE_THRESHOLD", str(image_confidence)))
             result = detector.process_frame(stream_id, frame)
             if result is None:
                 raise HTTPException(status_code=500, detail="Image processing failed")
+            if (
+                len(result.detections) == 0
+                and os.getenv("RETRY_IMAGE_WITH_FALLBACK_MODEL", "true").lower() == "true"
+                and detector._reload_fallback_model()
+            ):
+                logger.warning("Quantized model returned zero image detections; retrying with fallback ONNX model.")
+                result = detector.process_frame(stream_id, frame)
+                if result is None:
+                    raise HTTPException(status_code=500, detail="Image processing failed")
+        finally:
+            (
+                detector.conf_threshold,
+                detector.fire_conf_threshold,
+                detector.weapon_conf_threshold,
+            ) = previous_thresholds
 
         logger.info(f"Image processed for {stream_id}: {len(result.detections)} detections")
         return result
