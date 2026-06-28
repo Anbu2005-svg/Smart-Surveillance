@@ -24,6 +24,7 @@ from urllib import request as urllib_request
 from urllib import parse as urllib_parse
 from urllib import error as urllib_error
 from dotenv import load_dotenv
+import onnxruntime as ort
 
 # Import YOLO model
 from ultralytics import YOLO
@@ -393,6 +394,15 @@ class DetectionManager:
         self.fp16_allowed = True
         self.loaded_model_path = None
         self.fallback_model_path = None
+        self.use_direct_onnx = os.getenv("USE_DIRECT_ONNX", "true").lower() == "true"
+        self.onnx_session = None
+        self.onnx_input_name = None
+        self.onnx_output_names = None
+        self.class_names = [
+            item.strip()
+            for item in os.getenv("MODEL_CLASS_NAMES", "fire,intruder,weapon").split(",")
+            if item.strip()
+        ]
         
     def load_model(self):
         """Load model and select best available device."""
@@ -439,13 +449,31 @@ class DetectionManager:
                         model_candidate = quantized_candidate
                         break
 
-            self.model = YOLO(str(model_candidate))
             self.loaded_model_path = model_candidate
             self.fallback_model_path = (
                 original_model_candidate
                 if original_model_candidate.exists() and original_model_candidate != model_candidate
                 else None
             )
+            self.onnx_session = None
+            self.onnx_input_name = None
+            self.onnx_output_names = None
+            if self.use_direct_onnx and model_candidate.suffix.lower() == ".onnx":
+                session_options = ort.SessionOptions()
+                session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "1"))
+                session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
+                self.onnx_session = ort.InferenceSession(
+                    str(model_candidate),
+                    sess_options=session_options,
+                    providers=["CPUExecutionProvider"],
+                )
+                self.onnx_input_name = self.onnx_session.get_inputs()[0].name
+                self.onnx_output_names = [output.name for output in self.onnx_session.get_outputs()]
+                self.model = None
+                logger.info("Using direct ONNX Runtime inference")
+            else:
+                self.model = YOLO(str(model_candidate))
             self.model_info["model_name"] = model_candidate.name
             self.model_info["format"] = model_candidate.suffix.replace(".", "").upper() or "PT"
             if model_candidate.exists():
@@ -485,9 +513,27 @@ class DetectionManager:
         logger.warning(
             f"Quantized model failed on this runtime; falling back to {self.fallback_model_path}."
         )
-        self.model = YOLO(str(self.fallback_model_path))
         self.loaded_model_path = self.fallback_model_path
         self.fallback_model_path = None
+        self.onnx_session = None
+        self.onnx_input_name = None
+        self.onnx_output_names = None
+        if self.use_direct_onnx and self.loaded_model_path.suffix.lower() == ".onnx":
+            session_options = ort.SessionOptions()
+            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "1"))
+            session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
+            self.onnx_session = ort.InferenceSession(
+                str(self.loaded_model_path),
+                sess_options=session_options,
+                providers=["CPUExecutionProvider"],
+            )
+            self.onnx_input_name = self.onnx_session.get_inputs()[0].name
+            self.onnx_output_names = [output.name for output in self.onnx_session.get_outputs()]
+            self.model = None
+            logger.info("Using direct ONNX Runtime inference for fallback model")
+        else:
+            self.model = YOLO(str(self.loaded_model_path))
         self.model_info["model_name"] = self.loaded_model_path.name
         self.model_info["format"] = self.loaded_model_path.suffix.replace(".", "").upper() or "PT"
         model_size = self.loaded_model_path.stat().st_size / (1024 * 1024)
@@ -508,6 +554,149 @@ class DetectionManager:
             return False
         logger.warning("Image upload detection is using fallback ONNX model before inference.")
         return self._reload_fallback_model()
+
+    def _target_classes_for_stream(self, stream_id: Optional[str]) -> set:
+        if stream_id and stream_id in self.streams:
+            configured = self.streams[stream_id].get("target_classes", [])
+            if isinstance(configured, list):
+                return {str(c).strip().lower() for c in configured if str(c).strip()}
+        return set()
+
+    def _required_confidence_for_class(self, class_name: str) -> float:
+        normalized_class = str(class_name).strip().lower()
+        if normalized_class == "fire":
+            return self.fire_conf_threshold
+        if normalized_class == "weapon":
+            return self.weapon_conf_threshold
+        return self.conf_threshold
+
+    def _annotate_frame(self, frame: np.ndarray, detections: List[dict]) -> np.ndarray:
+        if not self.draw_model_boxes:
+            return frame
+
+        annotated = frame.copy()
+        for det in detections:
+            x1 = int((float(det["bbox"]["x1"]) / 100.0) * frame.shape[1])
+            y1 = int((float(det["bbox"]["y1"]) / 100.0) * frame.shape[0])
+            x2 = int((float(det["bbox"]["x2"]) / 100.0) * frame.shape[1])
+            y2 = int((float(det["bbox"]["y2"]) / 100.0) * frame.shape[0])
+            label = f'{det["class_name"]} {float(det["confidence"]):.2f}'
+
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 220, 255), 2)
+            text_y = y1 - 8 if y1 > 18 else y1 + 16
+            cv2.putText(
+                annotated,
+                label,
+                (x1, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 220, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        return annotated
+
+    def _detect_objects_onnx(self, frame: np.ndarray, stream_id: Optional[str] = None) -> tuple:
+        if self.onnx_session is None or not self.onnx_input_name:
+            return [], frame
+
+        start_time = time.time()
+        input_size = self.inference_imgsz
+        height, width = frame.shape[:2]
+        scale = min(input_size / width, input_size / height)
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        pad_x = (input_size - resized_width) // 2
+        pad_y = (input_size - resized_height) // 2
+
+        resized = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        canvas = np.full((input_size, input_size, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + resized_height, pad_x:pad_x + resized_width] = resized
+
+        input_tensor = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        input_tensor = np.transpose(input_tensor, (2, 0, 1))[None, ...]
+
+        outputs = self.onnx_session.run(self.onnx_output_names, {self.onnx_input_name: input_tensor})
+        prediction = np.squeeze(outputs[0])
+        if prediction.ndim != 2:
+            logger.warning(f"Unexpected ONNX output shape: {outputs[0].shape}")
+            return [], frame
+        if prediction.shape[0] < prediction.shape[1]:
+            prediction = prediction.T
+
+        if prediction.shape[1] < 6:
+            logger.warning(f"Unexpected ONNX detection width: {prediction.shape}")
+            return [], frame
+
+        class_scores = prediction[:, 4:]
+        class_ids = np.argmax(class_scores, axis=1)
+        confidences = class_scores[np.arange(class_scores.shape[0]), class_ids]
+        candidate_mask = confidences >= min(self.conf_threshold, self.fire_conf_threshold, self.weapon_conf_threshold)
+        prediction = prediction[candidate_mask]
+        class_ids = class_ids[candidate_mask]
+        confidences = confidences[candidate_mask]
+
+        boxes_for_nms = []
+        candidates = []
+        target_classes = self._target_classes_for_stream(stream_id)
+        for row, class_id, confidence in zip(prediction, class_ids, confidences):
+            class_name = self.class_names[int(class_id)] if int(class_id) < len(self.class_names) else str(int(class_id))
+            if float(confidence) < self._required_confidence_for_class(class_name):
+                continue
+            if target_classes and class_name.strip().lower() not in target_classes:
+                continue
+
+            cx, cy, box_w, box_h = [float(v) for v in row[:4]]
+            x1 = (cx - box_w / 2 - pad_x) / scale
+            y1 = (cy - box_h / 2 - pad_y) / scale
+            x2 = (cx + box_w / 2 - pad_x) / scale
+            y2 = (cy + box_h / 2 - pad_y) / scale
+            x1 = max(0.0, min(float(width), x1))
+            y1 = max(0.0, min(float(height), y1))
+            x2 = max(0.0, min(float(width), x2))
+            y2 = max(0.0, min(float(height), y2))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            boxes_for_nms.append([int(x1), int(y1), int(x2 - x1), int(y2 - y1)])
+            candidates.append((class_name, float(confidence), x1, y1, x2, y2))
+
+        if not candidates:
+            self.model_info["inference_time"] = time.time() - start_time
+            return [], frame
+
+        nms_indices = cv2.dnn.NMSBoxes(
+            boxes_for_nms,
+            [candidate[1] for candidate in candidates],
+            score_threshold=min(self.conf_threshold, self.fire_conf_threshold, self.weapon_conf_threshold),
+            nms_threshold=float(os.getenv("NMS_IOU_THRESHOLD", "0.45")),
+        )
+        if len(nms_indices) == 0:
+            self.model_info["inference_time"] = time.time() - start_time
+            return [], frame
+
+        detections = []
+        for index in np.array(nms_indices).flatten().tolist():
+            class_name, confidence, x1, y1, x2, y2 = candidates[index]
+            detections.append({
+                "id": str(uuid.uuid4()),
+                "class_name": class_name,
+                "confidence": confidence,
+                "bbox": {
+                    "x1": x1 / width * 100,
+                    "y1": y1 / height * 100,
+                    "x2": x2 / width * 100,
+                    "y2": y2 / height * 100,
+                },
+            })
+
+        inference_time = time.time() - start_time
+        self.model_info["inference_time"] = inference_time
+        self.processing_times.append(inference_time)
+        if len(self.processing_times) > 100:
+            self.processing_times.pop(0)
+
+        return detections, self._annotate_frame(frame, detections)
 
     def get_gpu_status(self) -> bool:
         """Check GPU availability"""
@@ -893,6 +1082,9 @@ class DetectionManager:
     
     def detect_objects(self, frame: np.ndarray, stream_id: Optional[str] = None) -> tuple:
         """Run object detection on a frame using CPU-optimized ONNX model"""
+        if self.onnx_session is not None:
+            return self._detect_objects_onnx(frame, stream_id=stream_id)
+
         if self.model is None:
             return [], frame
         
@@ -951,11 +1143,7 @@ class DetectionManager:
             self.model_info["inference_time"] = inference_time
             
             detections = []
-            target_classes = set()
-            if stream_id and stream_id in self.streams:
-                configured = self.streams[stream_id].get("target_classes", [])
-                if isinstance(configured, list):
-                    target_classes = {str(c).strip().lower() for c in configured if str(c).strip()}
+            target_classes = self._target_classes_for_stream(stream_id)
             
             # Parse results
             for result in results:
@@ -963,13 +1151,7 @@ class DetectionManager:
                 for box in boxes:
                     class_name = result.names[int(box.cls)]
                     confidence = float(box.conf)
-                    normalized_class = str(class_name).strip().lower()
-                    if normalized_class == "fire":
-                        required_conf = self.fire_conf_threshold
-                    elif normalized_class == "weapon":
-                        required_conf = self.weapon_conf_threshold
-                    else:
-                        required_conf = self.conf_threshold
+                    required_conf = self._required_confidence_for_class(class_name)
                     if confidence < required_conf:
                         continue
                     if target_classes and str(class_name).strip().lower() not in target_classes:
@@ -991,29 +1173,7 @@ class DetectionManager:
             if len(self.processing_times) > 100:
                 self.processing_times.pop(0)
             
-            if self.draw_model_boxes:
-                annotated = frame.copy()
-                for det in detections:
-                    x1 = int((float(det["bbox"]["x1"]) / 100.0) * frame.shape[1])
-                    y1 = int((float(det["bbox"]["y1"]) / 100.0) * frame.shape[0])
-                    x2 = int((float(det["bbox"]["x2"]) / 100.0) * frame.shape[1])
-                    y2 = int((float(det["bbox"]["y2"]) / 100.0) * frame.shape[0])
-                    label = f'{det["class_name"]} {float(det["confidence"]):.2f}'
-
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 220, 255), 2)
-                    text_y = y1 - 8 if y1 > 18 else y1 + 16
-                    cv2.putText(
-                        annotated,
-                        label,
-                        (x1, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 220, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
-                return detections, annotated
-            return detections, frame
+            return detections, self._annotate_frame(frame, detections)
             
         except Exception as e:
             logger.error(f"Error in detection: {e}")
@@ -2750,7 +2910,16 @@ async def process_uploaded_image(
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None:
             raise HTTPException(status_code=400, detail="Uploaded image could not be decoded")
-        frame = cv2.resize(frame, (detector.process_width, detector.process_height))
+        image_max_dim = int(os.getenv("IMAGE_PROCESS_MAX_DIM", "1280"))
+        image_height, image_width = frame.shape[:2]
+        largest_dim = max(image_width, image_height)
+        if largest_dim > image_max_dim:
+            scale = image_max_dim / largest_dim
+            frame = cv2.resize(
+                frame,
+                (max(1, int(image_width * scale)), max(1, int(image_height * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
 
         parsed_classes = []
         if target_classes:
