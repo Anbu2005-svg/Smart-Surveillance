@@ -497,6 +497,18 @@ class DetectionManager:
             self.use_half_precision = False
         return True
 
+    def use_fallback_model_for_image_uploads(self) -> bool:
+        if os.getenv("IMAGE_USE_FALLBACK_MODEL_FIRST", "true").lower() != "true":
+            return False
+        if not self.loaded_model_path:
+            return False
+        if self.loaded_model_path.suffix.lower() != ".onnx":
+            return False
+        if "int8" not in self.loaded_model_path.stem.lower():
+            return False
+        logger.warning("Image upload detection is using fallback ONNX model before inference.")
+        return self._reload_fallback_model()
+
     def get_gpu_status(self) -> bool:
         """Check GPU availability"""
         return torch.cuda.is_available()
@@ -2758,6 +2770,7 @@ async def process_uploaded_image(
         detector.streams[stream_id]["status"] = "active"
         _apply_stream_alert_target_for_user(stream_id, user)
 
+        detector.use_fallback_model_for_image_uploads()
         result = detector.process_frame(stream_id, frame)
         if result is None:
             raise HTTPException(status_code=500, detail="Image processing failed")
