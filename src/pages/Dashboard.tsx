@@ -17,6 +17,11 @@ interface BrowserCameraSession {
   timerId?: number;
 }
 
+const BROWSER_FRAME_INTERVAL_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INTERVAL_MS || 1000);
+const BROWSER_FRAME_INITIAL_DELAY_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INITIAL_DELAY_MS || 500);
+const BROWSER_FRAME_MAX_WIDTH = Number(import.meta.env.VITE_BROWSER_FRAME_MAX_WIDTH || 416);
+const BROWSER_FRAME_JPEG_QUALITY = Number(import.meta.env.VITE_BROWSER_FRAME_JPEG_QUALITY || 0.65);
+
 const getStreamFps = (history: DetectionResult[]): number => {
   if (!history || history.length < 2) return 0;
   const current = Date.parse(history[history.length - 1].timestamp);
@@ -157,32 +162,35 @@ export const Dashboard: React.FC = () => {
       if (session.stopped) return;
 
       try {
-        const width = video.videoWidth || 640;
-        const height = video.videoHeight || 480;
+        const sourceWidth = video.videoWidth || 640;
+        const sourceHeight = video.videoHeight || 480;
+        const scale = Math.min(1, BROWSER_FRAME_MAX_WIDTH / Math.max(1, sourceWidth));
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
         canvas.width = width;
         canvas.height = height;
         const context = canvas.getContext('2d');
         if (!context) {
           throw new Error('Unable to prepare camera frame.');
         }
-        context.drawImage(video, 0, 0, width, height);
+        context.drawImage(video, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
 
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob((frameBlob) => {
             if (frameBlob) resolve(frameBlob);
             else reject(new Error('Unable to capture camera frame.'));
-          }, 'image/jpeg', 0.78);
+          }, 'image/jpeg', BROWSER_FRAME_JPEG_QUALITY);
         });
 
         await detectionAPI.processBrowserFrame(streamId, blob, targetClasses);
-        session.timerId = window.setTimeout(captureFrame, 2000);
+        session.timerId = window.setTimeout(captureFrame, BROWSER_FRAME_INTERVAL_MS);
       } catch (error) {
         stopBrowserCameraSession(streamId);
         setActionError(getApiErrorMessage(error));
       }
     };
 
-    session.timerId = window.setTimeout(captureFrame, 750);
+    session.timerId = window.setTimeout(captureFrame, BROWSER_FRAME_INITIAL_DELAY_MS);
   };
 
   useEffect(() => {
