@@ -463,7 +463,7 @@ class DetectionManager:
             if self.use_direct_onnx and model_candidate.suffix.lower() == ".onnx":
                 session_options = ort.SessionOptions()
                 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "1"))
+                session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "2"))
                 session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
                 self.onnx_session = ort.InferenceSession(
                     str(model_candidate),
@@ -524,7 +524,7 @@ class DetectionManager:
         if self.use_direct_onnx and self.loaded_model_path.suffix.lower() == ".onnx":
             session_options = ort.SessionOptions()
             session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "1"))
+            session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "2"))
             session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
             self.onnx_session = ort.InferenceSession(
                 str(self.loaded_model_path),
