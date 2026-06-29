@@ -14,7 +14,6 @@ import time
 import logging
 import threading
 import os
-import base64
 import queue
 import re
 import secrets
@@ -1618,323 +1617,22 @@ class TelegramNotifier:
 
 
 class AIOutputVerifier:
-    """Verify detections with a stronger VLM before Telegram delivery."""
+    """Disabled verifier shim kept so existing status endpoints keep working."""
     def __init__(self):
-        self.enabled = os.getenv("VERIFY_ENABLED", "false").lower() == "true"
-        self.provider = os.getenv("VERIFY_PROVIDER", "openai").strip().lower()
-        self.model = os.getenv("VERIFY_MODEL", "gpt-4.1-mini").strip()
-        self.api_url = os.getenv("VERIFY_API_URL", "").strip()
-        raw_keys = (
-            os.getenv("VERIFY_API_KEYS", "").strip()
-            or os.getenv("VERIFY_API_KEY", "").strip()
-            or os.getenv("OPENAI_API_KEY", "").strip()
-            or os.getenv("GEMINI_API_KEY", "").strip()
-        )
-        # Support comma-separated keys for automatic fallback.
-        self.api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
-        self.api_key = self.api_keys[0] if self.api_keys else ""
-        self.timeout_sec = int(os.getenv("VERIFY_TIMEOUT_SEC", "10"))
-        self.min_confidence = float(os.getenv("VERIFY_MIN_CONFIDENCE", "0.05"))
-        self.send_on_error = os.getenv("VERIFY_SEND_ON_ERROR", "true").lower() == "true"
-        self.target_classes = {
-            c.strip().lower()
-            for c in os.getenv("VERIFY_TARGET_CLASSES", "").split(",")
-            if c.strip()
-        }
-        self.always_send_classes = {
-            c.strip().lower()
-            for c in os.getenv("VERIFY_ALWAYS_SEND_CLASSES", "").split(",")
-            if c.strip()
-        }
-        if not self.api_url:
-            if self.provider == "gemini":
-                self.api_url = "https://generativelanguage.googleapis.com/v1beta"
-            else:
-                self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.enabled = False
+        self.provider = "disabled"
+        self.model = "none"
+        self.timeout_sec = 0
+        self.min_confidence = 0.0
+        self.send_on_error = False
+        self.target_classes = set()
 
     def is_configured(self) -> bool:
-        if not self.enabled:
-            return True
-        if self.provider not in {"openai", "gemini"}:
-            return False
-        return bool(self.api_keys) and bool(self.api_url) and bool(self.model)
-
-    def should_verify(self, detections: list) -> bool:
-        if not self.enabled or not detections:
-            return False
-
-        top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
-        if float(top.get("confidence", 0.0)) < self.min_confidence:
-            return False
-
-        if self.target_classes:
-            return str(top.get("class_name", "")).lower() in self.target_classes
         return True
-
-    def _image_to_data_url(self, photo_path: str) -> str:
-        with open(photo_path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode("utf-8")
-        return f"data:image/jpeg;base64,{encoded}"
-
-    def _image_to_b64(self, photo_path: str) -> str:
-        with open(photo_path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-
-    def _image_to_b64_bytes(self, photo_bytes: bytes) -> str:
-        return base64.b64encode(photo_bytes).decode("utf-8")
-
-    def _build_openai_request(self, summary: dict, photo_path: Optional[str], photo_bytes: Optional[bytes] = None):
-        content = [
-            {
-                "type": "text",
-                "text": (
-                    "Validate this CCTV alert. Return strict JSON only with keys "
-                    "\"verified\" (boolean), \"reason\" (string), and \"confidence\" (0..1). "
-                    "Set verified=true only if the detection is visually plausible.\n\n"
-                    f"Detection summary:\n{json.dumps(summary)}"
-                ),
-            }
-        ]
-        if photo_bytes:
-            try:
-                data_url = f"data:image/jpeg;base64,{self._image_to_b64_bytes(photo_bytes)}"
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url},
-                })
-            except Exception as e:
-                logger.error(f"Verifier image encode failed: {e}")
-        elif photo_path and Path(photo_path).exists():
-            try:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": self._image_to_data_url(photo_path)},
-                })
-            except Exception as e:
-                logger.error(f"Verifier image encode failed: {e}")
-
-        payload = {
-            "model": self.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": "Return valid JSON only."},
-                {"role": "user", "content": content},
-            ],
-            "max_tokens": 200,
-        }
-        req = urllib_request.Request(
-            self.api_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
-        return req
-
-    def _build_gemini_request(self, summary: dict, photo_path: Optional[str], photo_bytes: Optional[bytes] = None):
-        prompt = (
-            "Validate this CCTV alert. Return strict JSON only with keys "
-            "\"verified\" (boolean), \"reason\" (string), and \"confidence\" (0..1). "
-            "Set verified=true only if the detection is visually plausible.\n\n"
-            f"Detection summary:\n{json.dumps(summary)}"
-        )
-        parts = [{"text": prompt}]
-        if photo_bytes:
-            try:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": self._image_to_b64_bytes(photo_bytes),
-                    }
-                })
-            except Exception as e:
-                logger.error(f"Verifier image encode failed: {e}")
-        elif photo_path and Path(photo_path).exists():
-            try:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": self._image_to_b64(photo_path),
-                    }
-                })
-            except Exception as e:
-                logger.error(f"Verifier image encode failed: {e}")
-
-        payload = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"temperature": 0, "maxOutputTokens": 200},
-        }
-        base = self.api_url.rstrip("/")
-        if ":generateContent" in base:
-            url = f"{base}?key={self.api_key}"
-        else:
-            url = f"{base}/models/{self.model}:generateContent?key={self.api_key}"
-
-        req = urllib_request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        return req
-
-    def _extract_raw_content(self, body: dict):
-        if self.provider == "gemini":
-            try:
-                parts = body["candidates"][0]["content"]["parts"]
-                return "\n".join(str(p.get("text", "")) for p in parts if isinstance(p, dict))
-            except Exception:
-                return ""
-        return body["choices"][0]["message"]["content"]
-
-    def _extract_json_object(self, text: str) -> Optional[dict]:
-        decoder = json.JSONDecoder()
-        for idx, ch in enumerate(text):
-            if ch != "{":
-                continue
-            try:
-                parsed, _ = decoder.raw_decode(text[idx:])
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                continue
-        return None
-
-    def _parse_verifier_content(self, raw_content) -> Optional[dict]:
-        if isinstance(raw_content, list):
-            chunks = []
-            for item in raw_content:
-                if isinstance(item, dict):
-                    chunks.append(str(item.get("text", "")))
-                else:
-                    chunks.append(str(item))
-            content_text = "\n".join(chunks)
-        else:
-            content_text = str(raw_content or "")
-
-        candidates = [content_text.strip()]
-        if "```" in content_text:
-            no_fence = content_text.replace("```json", "").replace("```JSON", "").replace("```", "")
-            candidates.append(no_fence.strip())
-
-        for candidate in candidates:
-            if not candidate:
-                continue
-            try:
-                parsed = json.loads(candidate)
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-
-            extracted = self._extract_json_object(candidate)
-            if extracted is not None:
-                return extracted
-
-        return None
-
-    def verify(
-        self,
-        stream_id: str,
-        stream_name: str,
-        detections: list,
-        photo_path: Optional[str] = None,
-        photo_bytes: Optional[bytes] = None,
-    ) -> dict:
-        if not self.should_verify(detections):
-            return {"ok": True, "verified": True, "reason": "verification_not_required"}
-
-        if not self.is_configured():
-            return {"ok": False, "verified": False, "reason": "verifier_not_configured"}
-
-        top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
-        top_class = str(top.get("class_name", "")).strip().lower()
-        if top_class in self.always_send_classes:
-            return {"ok": True, "verified": True, "reason": "critical_class_bypass"}
-        summary = {
-            "stream_id": stream_id,
-            "stream_name": stream_name,
-            "top_class": top.get("class_name", "unknown"),
-            "top_confidence": float(top.get("confidence", 0.0)),
-            "detection_count": len(detections),
-            "detections": [
-                {
-                    "class_name": d.get("class_name", "unknown"),
-                    "confidence": round(float(d.get("confidence", 0.0)), 4),
-                    "bbox": d.get("bbox", {}),
-                }
-                for d in detections[:10]
-            ],
-        }
-
-        try:
-            if self.provider == "gemini":
-                last_error = None
-                for key in self.api_keys:
-                    self.api_key = key
-                    req = self._build_gemini_request(summary, photo_path, photo_bytes)
-                    try:
-                        with urllib_request.urlopen(req, timeout=self.timeout_sec) as response:
-                            if response.getcode() != 200:
-                                last_error = f"verifier_http_{response.getcode()}"
-                                continue
-                            body = json.loads(response.read().decode("utf-8"))
-                            raw = self._extract_raw_content(body)
-                            parsed = self._parse_verifier_content(raw)
-                            if parsed is None:
-                                return {
-                                    "ok": False,
-                                    "verified": False,
-                                    "reason": "verifier_parse_error",
-                                    "raw_response": str(raw)[:300],
-                                }
-                            return {
-                                "ok": True,
-                                "verified": bool(parsed.get("verified", False)),
-                                "reason": str(parsed.get("reason", "no_reason")),
-                                "confidence": float(parsed.get("confidence", 0.0)),
-                            }
-                    except urllib_error.HTTPError as e:
-                        code = getattr(e, "code", None)
-                        # Rotate key on auth/quota errors
-                        if code in {401, 403, 429}:
-                            last_error = f"verifier_http_{code}"
-                            continue
-                        last_error = f"verifier_http_{code or 'error'}"
-                        break
-                    except Exception as e:
-                        last_error = f"verifier_error:{e}"
-                        continue
-                return {"ok": False, "verified": False, "reason": last_error or "verifier_error"}
-            else:
-                req = self._build_openai_request(summary, photo_path, photo_bytes)
-                with urllib_request.urlopen(req, timeout=self.timeout_sec) as response:
-                    if response.getcode() != 200:
-                        return {"ok": False, "verified": False, "reason": f"verifier_http_{response.getcode()}"}
-                    body = json.loads(response.read().decode("utf-8"))
-                    raw = self._extract_raw_content(body)
-                    parsed = self._parse_verifier_content(raw)
-                    if parsed is None:
-                        return {
-                            "ok": False,
-                            "verified": False,
-                            "reason": "verifier_parse_error",
-                            "raw_response": str(raw)[:300],
-                        }
-                    return {
-                        "ok": True,
-                        "verified": bool(parsed.get("verified", False)),
-                        "reason": str(parsed.get("reason", "no_reason")),
-                        "confidence": float(parsed.get("confidence", 0.0)),
-                    }
-        except Exception as e:
-            return {"ok": False, "verified": False, "reason": f"verifier_error:{e}"}
 
 
 class AlertPipeline:
-    """Asynchronous alert pipeline: verify then dispatch to Telegram."""
+    """Asynchronous alert pipeline: dispatch detections to Telegram."""
     def __init__(self, notifier: TelegramNotifier, verifier: AIOutputVerifier):
         self.notifier = notifier
         self.verifier = verifier
@@ -1997,43 +1695,18 @@ class AlertPipeline:
                 continue
 
             try:
-                decision = self.verifier.verify(
+                sent = self.notifier.notify_detection(
                     item["stream_id"],
                     item["stream_name"],
                     item["detections"],
                     item.get("photo_path"),
                     item.get("photo_bytes"),
+                    item.get("target_chat_id"),
                 )
-
-                if decision.get("ok") and decision.get("verified"):
-                    sent = self.notifier.notify_detection(
-                        item["stream_id"],
-                        item["stream_name"],
-                        item["detections"],
-                        item.get("photo_path"),
-                        item.get("photo_bytes"),
-                        item.get("target_chat_id"),
-                    )
-                    if sent:
-                        self.stats["verified_sent"] += 1
-                    else:
-                        self.stats["errors"] += 1
-                elif (not decision.get("ok")) and self.verifier.send_on_error:
-                    sent = self.notifier.notify_detection(
-                        item["stream_id"],
-                        item["stream_name"],
-                        item["detections"],
-                        item.get("photo_path"),
-                        item.get("photo_bytes"),
-                        item.get("target_chat_id"),
-                    )
-                    if sent:
-                        self.stats["verified_sent"] += 1
-                    else:
-                        self.stats["errors"] += 1
+                if sent:
+                    self.stats["verified_sent"] += 1
                 else:
-                    self.stats["rejected"] += 1
-
+                    self.stats["errors"] += 1
                 self.stats["processed"] += 1
             except Exception as e:
                 self.stats["errors"] += 1
