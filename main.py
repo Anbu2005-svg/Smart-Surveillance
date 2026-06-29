@@ -1412,7 +1412,7 @@ class TelegramNotifier:
         self.enabled = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-        self.min_confidence = float(os.getenv("TELEGRAM_MIN_CONFIDENCE", "0.7"))
+        self.min_confidence = float(os.getenv("TELEGRAM_MIN_CONFIDENCE", "0.05"))
         self.min_confidence_fire = float(os.getenv("TELEGRAM_MIN_CONFIDENCE_FIRE", str(self.min_confidence)))
         self.min_confidence_weapon = float(os.getenv("TELEGRAM_MIN_CONFIDENCE_WEAPON", str(self.min_confidence)))
         self.cooldown_sec = int(os.getenv("TELEGRAM_COOLDOWN_SEC", "30"))
@@ -1426,7 +1426,17 @@ class TelegramNotifier:
         return self.enabled and bool(self.bot_token) and bool(chat_id)
 
     def _can_send(self, stream_id: str, detections: list, target_chat_id: Optional[str] = None) -> bool:
-        if not self.is_configured(target_chat_id) or not detections:
+        if not self.is_configured(target_chat_id):
+            logger.warning(
+                "Telegram alert skipped for %s: enabled=%s token_set=%s chat_target_set=%s",
+                stream_id,
+                self.enabled,
+                bool(self.bot_token),
+                bool(self._resolve_chat_id(target_chat_id)),
+            )
+            return False
+        if not detections:
+            logger.debug("Telegram alert skipped for %s: no detections", stream_id)
             return False
 
         top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
@@ -1439,11 +1449,25 @@ class TelegramNotifier:
         else:
             min_conf = self.min_confidence
         if top_conf < min_conf:
+            logger.info(
+                "Telegram alert skipped for %s: %s confidence %.4f below threshold %.4f",
+                stream_id,
+                top_class or "unknown",
+                top_conf,
+                min_conf,
+            )
             return False
 
         now = time.time()
         last = self.last_alert_at.get(stream_id, 0)
-        return (now - last) >= self.cooldown_sec
+        if (now - last) < self.cooldown_sec:
+            logger.info(
+                "Telegram alert skipped for %s: cooldown %.1fs remaining",
+                stream_id,
+                self.cooldown_sec - (now - last),
+            )
+            return False
+        return True
 
     def send_message(self, message: str, target_chat_id: Optional[str] = None) -> bool:
         chat_id = self._resolve_chat_id(target_chat_id)
@@ -1610,8 +1634,8 @@ class AIOutputVerifier:
         self.api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
         self.api_key = self.api_keys[0] if self.api_keys else ""
         self.timeout_sec = int(os.getenv("VERIFY_TIMEOUT_SEC", "10"))
-        self.min_confidence = float(os.getenv("VERIFY_MIN_CONFIDENCE", "0.55"))
-        self.send_on_error = os.getenv("VERIFY_SEND_ON_ERROR", "false").lower() == "true"
+        self.min_confidence = float(os.getenv("VERIFY_MIN_CONFIDENCE", "0.05"))
+        self.send_on_error = os.getenv("VERIFY_SEND_ON_ERROR", "true").lower() == "true"
         self.target_classes = {
             c.strip().lower()
             for c in os.getenv("VERIFY_TARGET_CLASSES", "").split(",")
