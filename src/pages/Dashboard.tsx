@@ -17,7 +17,7 @@ interface BrowserCameraSession {
   timerId?: number;
 }
 
-const BROWSER_FRAME_INTERVAL_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INTERVAL_MS || 200);
+const BROWSER_FRAME_INTERVAL_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INTERVAL_MS || 100);
 const BROWSER_FRAME_INITIAL_DELAY_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INITIAL_DELAY_MS || 400);
 const BROWSER_FRAME_MAX_WIDTH = Number(import.meta.env.VITE_BROWSER_FRAME_MAX_WIDTH || 416);
 const BROWSER_FRAME_JPEG_QUALITY = Number(import.meta.env.VITE_BROWSER_FRAME_JPEG_QUALITY || 0.65);
