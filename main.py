@@ -345,7 +345,7 @@ class DetectionManager:
         self.process_height = int(os.getenv("PROCESS_FRAME_HEIGHT", "480"))
         self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "640"))
         self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "55"))
-        self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "false").lower() == "true"
+        self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "true").lower() == "true"
         self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "4"))
         self.detections_history_size = int(os.getenv("DETECTIONS_HISTORY_SIZE", "2"))
         self.frame_cache = {}
@@ -581,21 +581,34 @@ class DetectionManager:
 
         annotated = frame.copy()
         for det in detections:
-            x1 = int((float(det["bbox"]["x1"]) / 100.0) * frame.shape[1])
-            y1 = int((float(det["bbox"]["y1"]) / 100.0) * frame.shape[0])
-            x2 = int((float(det["bbox"]["x2"]) / 100.0) * frame.shape[1])
-            y2 = int((float(det["bbox"]["y2"]) / 100.0) * frame.shape[0])
-            label = f'{det["class_name"]} {float(det["confidence"]):.2f}'
+            x1 = max(0, min(frame.shape[1] - 1, int((float(det["bbox"]["x1"]) / 100.0) * frame.shape[1])))
+            y1 = max(0, min(frame.shape[0] - 1, int((float(det["bbox"]["y1"]) / 100.0) * frame.shape[0])))
+            x2 = max(0, min(frame.shape[1] - 1, int((float(det["bbox"]["x2"]) / 100.0) * frame.shape[1])))
+            y2 = max(0, min(frame.shape[0] - 1, int((float(det["bbox"]["y2"]) / 100.0) * frame.shape[0])))
+            if x2 <= x1 or y2 <= y1:
+                continue
 
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 220, 255), 2)
-            text_y = y1 - 8 if y1 > 18 else y1 + 16
+            label = f'{det["class_name"]} {float(det["confidence"]):.2f}'
+            color = (0, 220, 255)
+
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                2,
+            )
+            label_top = max(0, y1 - text_height - baseline - 6)
+            label_bottom = label_top + text_height + baseline + 6
+            label_right = min(frame.shape[1] - 1, x1 + text_width + 8)
+            cv2.rectangle(annotated, (x1, label_top), (label_right, label_bottom), color, -1)
             cv2.putText(
                 annotated,
                 label,
-                (x1, text_y),
+                (x1 + 4, label_bottom - baseline - 3),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 220, 255),
+                (15, 23, 42),
                 2,
                 cv2.LINE_AA,
             )
