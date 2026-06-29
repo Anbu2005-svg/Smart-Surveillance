@@ -4,7 +4,7 @@ import { VideoFeed } from '../components/VideoFeed';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { VideoInputModal } from '../components/VideoInputModal';
 import { AuthenticatedFrameImage } from '../components/AuthenticatedFrameImage';
-import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus, useVerifierStatus } from '../hooks/useApi';
+import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus } from '../hooks/useApi';
 import { Activity, Flame, Play, ShieldAlert, Square, UserRound } from 'lucide-react';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
 import type { DetectionResult, VideoStream } from '../services/api';
@@ -48,7 +48,6 @@ const getCameraErrorMessage = (error: unknown): string => {
 export const Dashboard: React.FC = () => {
   const { streams, loading: streamsLoading } = useVideoStreams();
   const { health } = useHealthStatus();
-  const { verifier } = useVerifierStatus();
   const [activeView, setActiveView] = useState<'home' | 'monitor'>('home');
   const [selectedStreamId, setSelectedStreamId] = useState<string>('');
   const [showVideoInputModal, setShowVideoInputModal] = useState(false);
@@ -309,7 +308,7 @@ export const Dashboard: React.FC = () => {
                 <span className="text-cyan-300"> Fire, Weapon, Intruder</span> Alerts
               </h1>
               <p className="text-slate-300 mt-3 max-w-2xl">
-                Fast detector on edge + AI verifier before Telegram notifications. Built for noisy real-world CCTV streams.
+                Fast detector on edge with direct Telegram notifications. Built for noisy real-world CCTV streams.
               </p>
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
@@ -339,8 +338,8 @@ export const Dashboard: React.FC = () => {
                 <p className="text-2xl font-bold text-emerald-300">{activeStreams}</p>
               </div>
               <div className="bg-slate-900/70 rounded-xl p-4 border border-slate-600/40">
-                <p className="text-slate-400 text-xs">Verifier</p>
-                <p className="text-lg font-bold text-cyan-300">{verifier?.enabled ? 'Enabled' : 'Disabled'}</p>
+                <p className="text-slate-400 text-xs">Telegram Alerts</p>
+                <p className="text-lg font-bold text-cyan-300">Direct</p>
               </div>
               <div className="bg-slate-900/70 rounded-xl p-4 border border-slate-600/40">
                 <p className="text-slate-400 text-xs">Top Detection</p>
@@ -355,16 +354,16 @@ export const Dashboard: React.FC = () => {
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-rose-300 mb-3">
                 <Flame className="w-5 h-5" />
-                <h2 className="font-bold">Fire Verification</h2>
+                <h2 className="font-bold">Fire Alerts</h2>
               </div>
-              <p className="text-slate-300 text-sm">Prioritize high-risk events and cross-check detector output before sending alerts.</p>
+              <p className="text-slate-300 text-sm">Prioritize high-risk fire events and send detection snapshots directly to Telegram.</p>
             </article>
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-amber-300 mb-3">
                 <ShieldAlert className="w-5 h-5" />
-                <h2 className="font-bold">Weapon Filtering</h2>
+                <h2 className="font-bold">Weapon Alerts</h2>
               </div>
-              <p className="text-slate-300 text-sm">Reduce false positives using multimodal reasoning on snapshots plus bounding boxes.</p>
+              <p className="text-slate-300 text-sm">Monitor weapon detections with bounding boxes and fast Telegram notification delivery.</p>
             </article>
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-cyan-300 mb-3">
@@ -378,34 +377,6 @@ export const Dashboard: React.FC = () => {
 
         {activeView === 'monitor' && (
           <section className="space-y-6 float-in stagger-2">
-            <div className="glass-panel rounded-xl p-5">
-              <h2 className="text-xl font-semibold text-slate-100 mb-4">AI Verification Pipeline</h2>
-              {verifier ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Provider / Model</p>
-                    <p className="text-slate-100 font-semibold">{verifier.provider} / {verifier.model}</p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Configured</p>
-                    <p className={`font-semibold ${verifier.configured ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      {verifier.configured ? 'Yes' : 'No'}
-                    </p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Queue</p>
-                    <p className="text-cyan-300 font-semibold">{verifier.pipeline.queue_size} pending</p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Rejected / Errors</p>
-                    <p className="text-rose-300 font-semibold">{verifier.pipeline.rejected} / {verifier.pipeline.errors}</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-slate-400">Loading verifier status...</p>
-              )}
-            </div>
-
             <div className="glass-panel rounded-xl p-5">
               <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
                 <h2 className="text-xl font-semibold text-slate-100">Video Streams</h2>

@@ -73,27 +73,6 @@ export interface VideoStream {
   current_detections: number;
 }
 
-export interface VerifierPipelineStats {
-  queue_size: number;
-  queued: number;
-  processed: number;
-  verified_sent: number;
-  rejected: number;
-  errors: number;
-}
-
-export interface VerifierStatus {
-  enabled: boolean;
-  configured: boolean;
-  provider: string;
-  model: string;
-  timeout_sec: number;
-  min_confidence: number;
-  send_on_error: boolean;
-  target_classes: string[];
-  pipeline: VerifierPipelineStats;
-}
-
 export interface TelegramProfile {
   configured: boolean;
   telegram_chat_id: string | null;
@@ -254,13 +233,6 @@ export const detectionAPI = {
   }> => {
     const headers = await getAuthHeaders();
     const response = await apiClient.get('/statistics', { headers });
-    return response.data;
-  },
-
-  // Get AI verifier and alert pipeline status
-  getVerifierStatus: async (): Promise<VerifierStatus> => {
-    const headers = await getAuthHeaders();
-    const response = await apiClient.get('/verifier/status', { headers });
     return response.data;
   },
 

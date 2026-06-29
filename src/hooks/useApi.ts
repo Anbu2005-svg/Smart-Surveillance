@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { detectionAPI, DetectionResult, TelegramProfile, VideoStream, VerifierStatus } from '../services/api';
+import { detectionAPI, DetectionResult, TelegramProfile, VideoStream } from '../services/api';
 
 export const useDetections = (streamId: string) => {
   const [detections, setDetections] = useState<DetectionResult[]>([]);
@@ -189,41 +189,6 @@ export const useHealthStatus = () => {
   }, []);
 
   return { health, error };
-};
-
-export const useVerifierStatus = () => {
-  const [verifier, setVerifier] = useState<VerifierStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const fetchVerifierStatus = async () => {
-      if (cancelled) return;
-      try {
-        setError(null);
-        const data = await detectionAPI.getVerifierStatus();
-        if (cancelled) return;
-        setVerifier(data);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to fetch verifier status');
-      } finally {
-        if (!cancelled) {
-          timer = setTimeout(fetchVerifierStatus, Number(import.meta.env.VITE_VERIFIER_POLL_MS || 15000));
-        }
-      }
-    };
-
-    fetchVerifierStatus();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  return { verifier, error };
 };
 
 export const useTelegramProfile = () => {
