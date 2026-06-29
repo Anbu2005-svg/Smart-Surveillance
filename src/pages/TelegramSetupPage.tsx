@@ -7,6 +7,11 @@ import { detectionAPI, getApiErrorMessage } from '../services/api';
 
 type SetupMode = 'otp' | 'manual';
 
+const TELEGRAM_BOT_USERNAME = 'SREC_CCTV_SURVEILLANCE_BOT';
+const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+const TELEGRAM_BOT_QR_URL = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(TELEGRAM_BOT_LINK)}`;
+const getBotUsername = (username?: string) => (username || TELEGRAM_BOT_USERNAME).replace(/^@/, '');
+
 export const TelegramSetupPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -213,6 +218,33 @@ export const TelegramSetupPage: React.FC = () => {
           </span>
         </p>
 
+        <div className="mt-5 grid gap-4 sm:grid-cols-[auto,1fr] items-center rounded-xl border border-cyan-500/30 bg-slate-800/70 p-4">
+          <div className="mx-auto w-36 rounded-lg bg-white p-2">
+            <img
+              src={TELEGRAM_BOT_QR_URL}
+              alt={`QR code for @${TELEGRAM_BOT_USERNAME}`}
+              className="h-32 w-32"
+            />
+          </div>
+          <div className="space-y-3 text-center sm:text-left">
+            <div>
+              <p className="text-sm text-slate-400">Telegram bot</p>
+              <p className="font-mono text-cyan-300 break-all">
+                @{TELEGRAM_BOT_USERNAME}
+              </p>
+            </div>
+            <a
+              href={TELEGRAM_BOT_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-400"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Open Telegram Bot
+            </a>
+          </div>
+        </div>
+
         {/* Error / Success banners */}
         {error && (
           <div className="mt-4 rounded-lg border border-rose-500/60 bg-rose-950/40 p-3 text-rose-100 text-sm">
@@ -357,15 +389,22 @@ export const TelegramSetupPage: React.FC = () => {
                       Open{' '}
                       {botUsername ? (
                         <a
-                          href={`https://t.me/${botUsername}`}
+                          href={`https://t.me/${getBotUsername(botUsername)}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-cyan-300 underline hover:text-cyan-200"
                         >
-                          @{botUsername}
+                          @{getBotUsername(botUsername)}
                         </a>
                       ) : (
-                        <span className="text-cyan-300">your CCTV bot</span>
+                        <a
+                          href={TELEGRAM_BOT_LINK}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-cyan-300 underline hover:text-cyan-200"
+                        >
+                          @{TELEGRAM_BOT_USERNAME}
+                        </a>
                       )}{' '}
                       in Telegram
                     </li>
@@ -437,7 +476,16 @@ export const TelegramSetupPage: React.FC = () => {
                 Manual Chat ID Entry
               </div>
               <p className="text-sm text-slate-300">
-                1. Open your bot in Telegram and send <code>/start</code>.
+                1. Open{' '}
+                <a
+                  href={TELEGRAM_BOT_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 underline hover:text-cyan-200"
+                >
+                  @{TELEGRAM_BOT_USERNAME}
+                </a>{' '}
+                in Telegram and send <code>/start</code>.
               </p>
               <p className="text-sm text-slate-300">
                 2. Get your chat ID (for example from{' '}
