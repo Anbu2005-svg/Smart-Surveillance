@@ -343,7 +343,7 @@ class DetectionManager:
         self.process_width = int(os.getenv("PROCESS_FRAME_WIDTH", "640"))
         self.process_height = int(os.getenv("PROCESS_FRAME_HEIGHT", "480"))
         self.inference_imgsz = int(os.getenv("INFERENCE_IMGSZ", "640"))
-        self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "55"))
+        self.jpeg_quality = int(os.getenv("JPEG_QUALITY", "45"))
         self.draw_model_boxes = os.getenv("DRAW_MODEL_BOXES", "true").lower() == "true"
         self.frame_cache_max = int(os.getenv("MAX_CACHED_FRAMES", "4"))
         self.detections_history_size = int(os.getenv("DETECTIONS_HISTORY_SIZE", "2"))
@@ -463,7 +463,7 @@ class DetectionManager:
             if self.use_direct_onnx and model_candidate.suffix.lower() == ".onnx":
                 session_options = ort.SessionOptions()
                 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "2"))
+                session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "3"))
                 session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
                 self.onnx_session = ort.InferenceSession(
                     str(model_candidate),
@@ -524,7 +524,7 @@ class DetectionManager:
         if self.use_direct_onnx and self.loaded_model_path.suffix.lower() == ".onnx":
             session_options = ort.SessionOptions()
             session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "2"))
+            session_options.intra_op_num_threads = int(os.getenv("ONNX_INTRA_OP_THREADS", "3"))
             session_options.inter_op_num_threads = int(os.getenv("ONNX_INTER_OP_THREADS", "1"))
             self.onnx_session = ort.InferenceSession(
                 str(self.loaded_model_path),
