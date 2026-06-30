@@ -45,6 +45,30 @@ const getCameraErrorMessage = (error: unknown): string => {
   return error instanceof Error ? error.message : 'Unable to open device camera.';
 };
 
+const LocalVideoPreview: React.FC<{ stream: MediaStream; label?: string }> = ({ stream, label = 'Live' }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.srcObject = stream;
+  }, [stream]);
+
+  return (
+    <div className="relative h-full w-full">
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className="h-full w-full object-cover"
+      />
+      <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-cyan-100">
+        {label}
+      </span>
+    </div>
+  );
+};
+
 export const Dashboard: React.FC = () => {
   const { streams, loading: streamsLoading } = useVideoStreams();
   const { health } = useHealthStatus();
@@ -491,6 +515,7 @@ export const Dashboard: React.FC = () => {
                     const streamHistory = detectionsByStream[stream.id] || [];
                     const latest = streamHistory.length > 0 ? streamHistory[streamHistory.length - 1] : null;
                     const fps = getStreamFps(streamHistory);
+                    const localStream = browserCameraStreams[stream.id] || null;
 
                     return (
                       <div
@@ -510,7 +535,9 @@ export const Dashboard: React.FC = () => {
                           </div>
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center">
-                          {latest?.image_url ? (
+                          {localStream ? (
+                            <LocalVideoPreview stream={localStream} label="Live camera" />
+                          ) : latest?.image_url ? (
                             <AuthenticatedFrameImage
                               src={latest.image_url}
                               alt={`${stream.name} feed`}
