@@ -331,7 +331,7 @@ class DetectionManager:
         self.device = "cpu"
         self.model_path = os.getenv("MODEL_PATH", "best (1).onnx").strip().strip('"').strip("'")
         self.conf_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", "0.25"))
-        self.fire_conf_threshold = float(os.getenv("FIRE_CONFIDENCE_THRESHOLD", str(self.conf_threshold)))
+        self.fire_conf_threshold = float(os.getenv("FIRE_CONFIDENCE_THRESHOLD", "0.05"))
         self.weapon_conf_threshold = float(os.getenv("WEAPON_CONFIDENCE_THRESHOLD", str(self.conf_threshold)))
         self.use_half_precision = os.getenv("USE_HALF_PRECISION", "true").lower() == "true"
         self.total_detections = 0
@@ -2739,7 +2739,7 @@ async def process_uploaded_image(
         )
         try:
             detector.conf_threshold = image_confidence
-            detector.fire_conf_threshold = float(os.getenv("IMAGE_FIRE_CONFIDENCE_THRESHOLD", str(image_confidence)))
+            detector.fire_conf_threshold = float(os.getenv("IMAGE_FIRE_CONFIDENCE_THRESHOLD", "0.03"))
             detector.weapon_conf_threshold = float(os.getenv("IMAGE_WEAPON_CONFIDENCE_THRESHOLD", str(image_confidence)))
             result = detector.process_frame(stream_id, frame)
             if result is None:
