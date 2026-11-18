@@ -194,7 +194,7 @@ export const TelegramSetupPage: React.FC = () => {
   // ── Render ──
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-4 py-12">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-4 py-8 md:py-12 pt-safe pb-safe pb-28 md:pb-12">
       <div className="max-w-2xl mx-auto bg-slate-900/80 border border-slate-700 rounded-2xl p-6 md:p-8 shadow-xl">
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">

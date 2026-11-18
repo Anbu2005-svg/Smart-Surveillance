@@ -2,10 +2,13 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { AuthPage } from './pages/AuthPage';
+import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { TelegramSetupPage } from './pages/TelegramSetupPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { TelegramSetupGuard } from './components/TelegramSetupGuard';
+import { OfflineBanner } from './components/OfflineBanner';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
 import './styles/globals.css';
 
 function App() {
@@ -16,8 +19,11 @@ function App() {
         v7_relativeSplatPath: true,
       }}
     >
+      <OfflineBanner />
+      <PWAInstallBanner />
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route
           path="/telegram-setup"
