@@ -8,6 +8,8 @@ import { TelegramSetupPage } from './pages/TelegramSetupPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { TelegramSetupGuard } from './components/TelegramSetupGuard';
 import { detectionAPI } from './services/api';
+import { OfflineBanner } from './components/OfflineBanner';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
 import './styles/globals.css';
 
 function App() {
@@ -22,6 +24,8 @@ function App() {
         v7_relativeSplatPath: true,
       }}
     >
+      <OfflineBanner />
+      <PWAInstallBanner />
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />

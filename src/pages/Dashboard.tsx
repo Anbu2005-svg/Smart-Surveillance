@@ -4,6 +4,7 @@ import { VideoFeed } from '../components/VideoFeed';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { VideoInputModal } from '../components/VideoInputModal';
 import { AuthenticatedFrameImage } from '../components/AuthenticatedFrameImage';
+import { MobileBottomNav } from '../components/MobileBottomNav';
 import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus } from '../hooks/useApi';
 import { Activity, Flame, Play, ShieldAlert, Square, UserRound } from 'lucide-react';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
@@ -317,7 +318,7 @@ export const Dashboard: React.FC = () => {
         onMonitorClick={() => setActiveView('monitor')}
       />
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-8 space-y-6">
         {actionError && (
           <div className="rounded-lg border border-rose-400/60 bg-rose-900/30 px-4 py-3 text-sm text-rose-100">
             {actionError}
@@ -592,6 +593,12 @@ export const Dashboard: React.FC = () => {
           onCancel={() => setShowVideoInputModal(false)}
         />
       </div>
+
+      <MobileBottomNav
+        activeView={activeView}
+        onHomeClick={() => setActiveView('home')}
+        onMonitorClick={() => setActiveView('monitor')}
+      />
     </div>
   );
 };

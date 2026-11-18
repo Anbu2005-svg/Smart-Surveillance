@@ -98,7 +98,7 @@ export const AuthPage: React.FC = () => {
       errorText.includes('password'));
 
   return (
-    <div className="min-h-screen auth-bg flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen auth-bg flex items-center justify-center px-4 py-8 pt-safe pb-safe">
       <div className="max-w-[430px] w-full">
         <div className="text-center mb-7">
           <div className="flex items-center justify-center gap-3 mb-4">

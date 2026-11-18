@@ -177,24 +177,24 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => e.preventDefault()}
     >
-      <div className="bg-gray-900 rounded-lg shadow-xl max-w-md w-full mx-4 border border-gray-700 max-h-[85vh] overflow-hidden">
+      <div className="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-700">
-          <h2 className="text-xl font-bold text-white">Select Video Input</h2>
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-gray-800 flex-shrink-0">
+          <h2 className="text-lg sm:text-xl font-bold text-white">Select Video Input</h2>
           <button
             onClick={onCancel}
-            className="text-gray-400 hover:text-white transition"
+            className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-4 overflow-y-auto max-h-[60vh] pr-2">
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 pr-2">
           {/* Browser Camera Option */}
           <div
             onClick={() => {
@@ -215,7 +215,6 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
               Use this browser's camera after granting permission.
             </p>
           </div>
-
           {/* Webcam Option */}
           <div
             onClick={() => {
@@ -448,7 +447,7 @@ export const VideoInputModal: React.FC<VideoInputModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 p-6 border-t border-gray-700 bg-gray-800">
+        <div className="flex gap-3 p-4 sm:p-5 border-t border-gray-800 bg-gray-800/90 flex-shrink-0">
           <button
             onClick={onCancel}
             className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded transition"

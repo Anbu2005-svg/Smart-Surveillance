@@ -7,3 +7,7 @@ dist/
 .env
 .env.*
 .env.local
+.worktrees/
+CCTV/
+__pycache__/
+uploaded_videos/
