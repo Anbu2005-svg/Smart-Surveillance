@@ -4,6 +4,7 @@ import { Bell, Check, Copy, Key, MessageCircle, Save, Send, Smartphone } from 'l
 import { useAuth } from '../hooks/useAuth';
 import { useTelegramProfile } from '../hooks/useApi';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
+import { MobileBottomNav } from '../components/MobileBottomNav';
 
 type SetupMode = 'otp' | 'manual';
 
@@ -551,6 +552,7 @@ export const TelegramSetupPage: React.FC = () => {
           </Link>
         </div>
       </div>
+      <MobileBottomNav />
     </div>
   );
 };

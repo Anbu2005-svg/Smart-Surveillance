@@ -1,7 +1,7 @@
 {
   "name": "CCTV AI Surveillance Command Center",
   "short_name": "CCTV AI",
-  "description": "Real-time AI CCTV surveillance, intrusion detection, fire/weapon alert monitoring and command center.",
+  "description": "Real-time AI CCTV surveillance, intrusion detection, fire/weapon alert monitoring and Telegram notifications.",
   "start_url": "/",
   "scope": "/",
   "id": "/",
@@ -13,7 +13,7 @@
   ],
   "orientation": "any",
   "background_color": "#071026",
-  "theme_color": "#0a1a36",
+  "theme_color": "#24A1DE",
   "lang": "en",
   "dir": "ltr",
   "categories": [

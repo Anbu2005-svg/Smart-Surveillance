@@ -1,7 +1,12 @@
-<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="64" height="64" rx="14" fill="#071026"/>
-  <rect x="14" y="20" width="26" height="20" rx="5" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-  <path d="M 40 25 L 50 20 V 39 L 40 34 Z" fill="#2dd4bf" stroke="#38bdf8" stroke-width="1.5"/>
-  <circle cx="27" cy="30" r="5" fill="#38bdf8"/>
-  <circle cx="44" cy="16" r="3" fill="#ef4444"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="64" height="64">
+  <defs>
+    <linearGradient id="tgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2AABEE" />
+      <stop offset="100%" stop-color="#229ED9" />
+    </linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="120" fill="url(#tgGrad)" />
+  <path d="M 98 175 c -3.887 0 -3.227 -1.468 -4.568 -5.17 L 82 132.206 l 88.5 -52.206 Z" fill="#c8daea" />
+  <path d="M 98 175 c 3 0 4.327 -1.373 6 -3 l 16 -15.558 l -19.958 -12.035 Z" fill="#a9cbe4" />
+  <path d="M 100.04 144.41 l 48.36 35.729 c 5.519 3.045 9.51 1.468 10.887 -5.123 l 19.685 -92.763 c 2.015 -8.08 -3.08 -11.745 -8.35 -9.347 l -115.5 44.537 c -7.89 3.165 -7.843 7.567 -1.438 9.528 l 29.663 9.258 l 68.673 -43.325 c 3.242 -1.966 6.218 -0.91 3.775 1.258 Z" fill="#ffffff" />
 </svg>
