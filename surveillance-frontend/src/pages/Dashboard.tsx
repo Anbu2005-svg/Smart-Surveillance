@@ -1,14 +1,27 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar } from '../components/StatusBar';
 import { VideoFeed } from '../components/VideoFeed';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { VideoInputModal } from '../components/VideoInputModal';
 import { AuthenticatedFrameImage } from '../components/AuthenticatedFrameImage';
 import { MobileBottomNav } from '../components/MobileBottomNav';
-import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus, useVerifierStatus } from '../hooks/useApi';
+import { useDetections, useMultiDetections, useVideoStreams, useHealthStatus } from '../hooks/useApi';
 import { Activity, Flame, Play, ShieldAlert, Square, UserRound } from 'lucide-react';
 import { detectionAPI, getApiErrorMessage } from '../services/api';
 import type { DetectionResult, VideoStream } from '../services/api';
+
+interface BrowserCameraSession {
+  mediaStream: MediaStream;
+  video: HTMLVideoElement;
+  canvas: HTMLCanvasElement;
+  stopped: boolean;
+  timerId?: number;
+}
+
+const BROWSER_FRAME_INTERVAL_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INTERVAL_MS || 100);
+const BROWSER_FRAME_INITIAL_DELAY_MS = Number(import.meta.env.VITE_BROWSER_FRAME_INITIAL_DELAY_MS || 400);
+const BROWSER_FRAME_MAX_WIDTH = Number(import.meta.env.VITE_BROWSER_FRAME_MAX_WIDTH || 416);
+const BROWSER_FRAME_JPEG_QUALITY = Number(import.meta.env.VITE_BROWSER_FRAME_JPEG_QUALITY || 0.65);
 
 const getStreamFps = (history: DetectionResult[]): number => {
   if (!history || history.length < 2) return 0;
@@ -18,10 +31,48 @@ const getStreamFps = (history: DetectionResult[]): number => {
   return 1000 / (current - prev);
 };
 
+const getCameraErrorMessage = (error: unknown): string => {
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+      return 'Camera permission was blocked. Allow camera access in the browser site settings and try again.';
+    }
+    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+      return 'No device camera was found on this browser/device.';
+    }
+    if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+      return 'Camera is already in use by another app or browser tab.';
+    }
+  }
+  return error instanceof Error ? error.message : 'Unable to open device camera.';
+};
+
+const LocalVideoPreview: React.FC<{ stream: MediaStream; label?: string }> = ({ stream, label = 'Live' }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.srcObject = stream;
+  }, [stream]);
+
+  return (
+    <div className="relative h-full w-full">
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className="h-full w-full object-cover"
+      />
+      <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-cyan-100">
+        {label}
+      </span>
+    </div>
+  );
+};
+
 export const Dashboard: React.FC = () => {
   const { streams, loading: streamsLoading } = useVideoStreams();
   const { health } = useHealthStatus();
-  const { verifier } = useVerifierStatus();
   const [activeView, setActiveView] = useState<'home' | 'monitor'>('home');
   const [selectedStreamId, setSelectedStreamId] = useState<string>('');
   const [showVideoInputModal, setShowVideoInputModal] = useState(false);
@@ -31,6 +82,8 @@ export const Dashboard: React.FC = () => {
   const [creatingStream, setCreatingStream] = useState(false);
   const [actionError, setActionError] = useState('');
   const [gridColumns, setGridColumns] = useState(2);
+  const [browserCameraStreams, setBrowserCameraStreams] = useState<Record<string, MediaStream>>({});
+  const browserCameraSessionsRef = useRef<Record<string, BrowserCameraSession>>({});
   const { detections, loading: detectionsLoading } = useDetections(selectedStreamId);
 
   const activeStreamList = useMemo(
@@ -58,20 +111,152 @@ export const Dashboard: React.FC = () => {
     setShowVideoInputModal(true);
   };
 
+  const stopBrowserCameraSession = (streamId: string) => {
+    const session = browserCameraSessionsRef.current[streamId];
+    if (!session) return;
+    session.stopped = true;
+    if (session.timerId) {
+      window.clearTimeout(session.timerId);
+    }
+    session.mediaStream.getTracks().forEach((track) => track.stop());
+    session.video.srcObject = null;
+    delete browserCameraSessionsRef.current[streamId];
+    setBrowserCameraStreams((current) => {
+      const next = { ...current };
+      delete next[streamId];
+      return next;
+    });
+  };
+
+  const startBrowserCameraDetection = async (
+    streamId: string,
+    targetClasses: string[] = []
+  ) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('This browser does not support device camera access.');
+    }
+
+    stopBrowserCameraSession(streamId);
+
+    let mediaStream: MediaStream;
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && ['NotAllowedError', 'SecurityError', 'NotFoundError'].includes(error.name)) {
+        throw new Error(getCameraErrorMessage(error));
+      }
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      } catch (fallbackError) {
+        throw new Error(getCameraErrorMessage(fallbackError));
+      }
+    }
+
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.srcObject = mediaStream;
+    await new Promise<void>((resolve) => {
+      if (video.readyState >= 2) {
+        resolve();
+        return;
+      }
+      video.onloadedmetadata = () => resolve();
+    });
+    await video.play();
+    setBrowserCameraStreams((current) => ({ ...current, [streamId]: mediaStream }));
+
+    const canvas = document.createElement('canvas');
+    const session: BrowserCameraSession = {
+      mediaStream,
+      video,
+      canvas,
+      stopped: false,
+    };
+    browserCameraSessionsRef.current[streamId] = session;
+
+    const captureFrame = async () => {
+      if (session.stopped) return;
+
+      try {
+        const sourceWidth = video.videoWidth || 640;
+        const sourceHeight = video.videoHeight || 480;
+        const scale = Math.min(1, BROWSER_FRAME_MAX_WIDTH / Math.max(1, sourceWidth));
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          throw new Error('Unable to prepare camera frame.');
+        }
+        context.drawImage(video, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
+
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((frameBlob) => {
+            if (frameBlob) resolve(frameBlob);
+            else reject(new Error('Unable to capture camera frame.'));
+          }, 'image/jpeg', BROWSER_FRAME_JPEG_QUALITY);
+        });
+
+        await detectionAPI.processBrowserFrame(streamId, blob, targetClasses);
+        session.timerId = window.setTimeout(captureFrame, BROWSER_FRAME_INTERVAL_MS);
+      } catch (error) {
+        stopBrowserCameraSession(streamId);
+        setActionError(getApiErrorMessage(error));
+      }
+    };
+
+    session.timerId = window.setTimeout(captureFrame, BROWSER_FRAME_INITIAL_DELAY_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.keys(browserCameraSessionsRef.current).forEach(stopBrowserCameraSession);
+    };
+  }, []);
+
   const handleVideoInputConfirm = async (
     inputMethod: string,
     inputSource: string,
     targetClasses: string[] = [],
-    videoFile: File | null = null
+    inputFile: File | null = null
   ) => {
     try {
       setActionError('');
+      if (inputMethod === 'browser_camera') {
+        await startBrowserCameraDetection(selectedStreamForInput, targetClasses);
+        setShowVideoInputModal(false);
+        setSelectedStreamId(selectedStreamForInput);
+        setActiveView('monitor');
+        return;
+      }
+
       let resolvedSource = inputSource;
+      if (inputMethod === 'image_file') {
+        if (!inputFile) {
+          throw new Error('Select an image file to upload.');
+        }
+        stopBrowserCameraSession(selectedStreamForInput);
+        await detectionAPI.processImageFile(selectedStreamForInput, inputFile, targetClasses);
+        setShowVideoInputModal(false);
+        setSelectedStreamId(selectedStreamForInput);
+        setActiveView('monitor');
+        return;
+      }
+
       if (inputMethod === 'video_file') {
-        if (!videoFile) {
+        if (!inputFile) {
           throw new Error('Select a video file to upload.');
         }
-        const uploaded = await detectionAPI.uploadVideoFile(videoFile);
+        const uploaded = await detectionAPI.uploadVideoFile(inputFile);
         resolvedSource = uploaded.stored_path;
       }
       await detectionAPI.startDetectionWithInput(
@@ -91,6 +276,7 @@ export const Dashboard: React.FC = () => {
   const handleStopDetection = async (streamId: string) => {
     try {
       setActionError('');
+      stopBrowserCameraSession(streamId);
       await detectionAPI.stopDetection(streamId);
     } catch (error) {
       setActionError(getApiErrorMessage(error));
@@ -147,7 +333,7 @@ export const Dashboard: React.FC = () => {
                 <span className="text-cyan-300"> Fire, Weapon, Intruder</span> Alerts
               </h1>
               <p className="text-slate-300 mt-3 max-w-2xl">
-                Fast detector on edge + AI verifier before Telegram notifications. Built for noisy real-world CCTV streams.
+                Fast detector on edge with direct Telegram notifications. Built for noisy real-world CCTV streams.
               </p>
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
@@ -177,8 +363,8 @@ export const Dashboard: React.FC = () => {
                 <p className="text-2xl font-bold text-emerald-300">{activeStreams}</p>
               </div>
               <div className="bg-slate-900/70 rounded-xl p-4 border border-slate-600/40">
-                <p className="text-slate-400 text-xs">Verifier</p>
-                <p className="text-lg font-bold text-cyan-300">{verifier?.enabled ? 'Enabled' : 'Disabled'}</p>
+                <p className="text-slate-400 text-xs">Telegram Alerts</p>
+                <p className="text-lg font-bold text-cyan-300">Direct</p>
               </div>
               <div className="bg-slate-900/70 rounded-xl p-4 border border-slate-600/40">
                 <p className="text-slate-400 text-xs">Top Detection</p>
@@ -193,16 +379,16 @@ export const Dashboard: React.FC = () => {
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-rose-300 mb-3">
                 <Flame className="w-5 h-5" />
-                <h2 className="font-bold">Fire Verification</h2>
+                <h2 className="font-bold">Fire Alerts</h2>
               </div>
-              <p className="text-slate-300 text-sm">Prioritize high-risk events and cross-check detector output before sending alerts.</p>
+              <p className="text-slate-300 text-sm">Prioritize high-risk fire events and send detection snapshots directly to Telegram.</p>
             </article>
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-amber-300 mb-3">
                 <ShieldAlert className="w-5 h-5" />
-                <h2 className="font-bold">Weapon Filtering</h2>
+                <h2 className="font-bold">Weapon Alerts</h2>
               </div>
-              <p className="text-slate-300 text-sm">Reduce false positives using multimodal reasoning on snapshots plus bounding boxes.</p>
+              <p className="text-slate-300 text-sm">Monitor weapon detections with bounding boxes and fast Telegram notification delivery.</p>
             </article>
             <article className="glass-panel rounded-xl p-5">
               <div className="flex items-center gap-3 text-cyan-300 mb-3">
@@ -216,34 +402,6 @@ export const Dashboard: React.FC = () => {
 
         {activeView === 'monitor' && (
           <section className="space-y-6 float-in stagger-2">
-            <div className="glass-panel rounded-xl p-5">
-              <h2 className="text-xl font-semibold text-slate-100 mb-4">AI Verification Pipeline</h2>
-              {verifier ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Provider / Model</p>
-                    <p className="text-slate-100 font-semibold">{verifier.provider} / {verifier.model}</p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Configured</p>
-                    <p className={`font-semibold ${verifier.configured ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      {verifier.configured ? 'Yes' : 'No'}
-                    </p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Queue</p>
-                    <p className="text-cyan-300 font-semibold">{verifier.pipeline.queue_size} pending</p>
-                  </div>
-                  <div className="bg-slate-900/70 rounded p-3 border border-slate-600/30">
-                    <p className="text-slate-400 text-xs">Rejected / Errors</p>
-                    <p className="text-rose-300 font-semibold">{verifier.pipeline.rejected} / {verifier.pipeline.errors}</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-slate-400">Loading verifier status...</p>
-              )}
-            </div>
-
             <div className="glass-panel rounded-xl p-5">
               <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
                 <h2 className="text-xl font-semibold text-slate-100">Video Streams</h2>
@@ -358,6 +516,7 @@ export const Dashboard: React.FC = () => {
                     const streamHistory = detectionsByStream[stream.id] || [];
                     const latest = streamHistory.length > 0 ? streamHistory[streamHistory.length - 1] : null;
                     const fps = getStreamFps(streamHistory);
+                    const localStream = browserCameraStreams[stream.id] || null;
 
                     return (
                       <div
@@ -377,7 +536,9 @@ export const Dashboard: React.FC = () => {
                           </div>
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center">
-                          {latest?.image_url ? (
+                          {localStream ? (
+                            <LocalVideoPreview stream={localStream} label="Live camera" />
+                          ) : latest?.image_url ? (
                             <AuthenticatedFrameImage
                               src={latest.image_url}
                               alt={`${stream.name} feed`}
@@ -409,6 +570,7 @@ export const Dashboard: React.FC = () => {
                     isLoading={detectionsLoading}
                     streamId={selectedStreamId}
                     isStreamActive={selectedStream?.status === 'active'}
+                    localStream={browserCameraStreams[selectedStreamId] || null}
                   />
                 </div>
                 <div className="glass-panel rounded-xl p-4">

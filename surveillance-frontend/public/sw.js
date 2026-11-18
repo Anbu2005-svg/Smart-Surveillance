@@ -1,5 +1,5 @@
-// CCTV AI Surveillance PWA Service Worker
-const CACHE_NAME = 'cctv-ai-pwa-v1.0.0';
+// CCTV AI Surveillance PWA Service Worker (Telegram Theme)
+const CACHE_NAME = 'cctv-tg-pwa-v1.1.0';
 
 const PRECACHE_ASSETS = [
   '/',

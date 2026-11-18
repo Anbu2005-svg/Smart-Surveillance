@@ -1,47 +1,15 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="512" height="512">
   <defs>
-    <radialGradient id="bgGlow" cx="50%" cy="40%" r="60%">
-      <stop offset="0%" stop-color="#0f2b5c" />
-      <stop offset="100%" stop-color="#071026" />
-    </radialGradient>
-    <linearGradient id="lensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="100%" stop-color="#0284c7" />
-    </linearGradient>
-    <linearGradient id="coneGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#2dd4bf" />
-      <stop offset="100%" stop-color="#10b981" />
+    <linearGradient id="tgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2AABEE" />
+      <stop offset="100%" stop-color="#229ED9" />
     </linearGradient>
   </defs>
-  <!-- Background with subtle border -->
-  <rect width="512" height="512" rx="112" fill="url(#bgGlow)"/>
-  <rect x="6" y="6" width="500" height="500" rx="106" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="6"/>
-
-  <!-- AI Detection Bracket Markers -->
-  <path d="M 64 120 L 64 64 L 120 64" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 448 120 L 448 64 L 392 64" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 64 392 L 64 448 L 120 448" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 448 392 L 448 448 L 392 448" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Radar Scan Arc -->
-  <path d="M 160 170 A 180 180 0 0 1 352 170" stroke="#38bdf8" stroke-opacity="0.3" stroke-width="6" stroke-linecap="round"/>
-
-  <!-- CCTV Camera Body -->
-  <rect x="130" y="180" width="200" height="130" rx="28" fill="#0f172a" stroke="#38bdf8" stroke-width="10"/>
-
-  <!-- Lens Cone (Right-pointing) -->
-  <path d="M 324 212 L 404 168 C 418 160 436 170 436 186 L 436 304 C 436 320 418 330 404 322 L 324 278 Z" fill="url(#coneGrad)" stroke="#38bdf8" stroke-width="8" stroke-linejoin="round"/>
-
-  <!-- Center Camera Aperture -->
-  <circle cx="230" cy="245" r="46" fill="#020617" stroke="#38bdf8" stroke-width="8"/>
-  <circle cx="230" cy="245" r="28" fill="url(#lensGrad)"/>
-  <circle cx="220" cy="235" r="9" fill="#ffffff" fill-opacity="0.8"/>
-
-  <!-- Camera Stand & Base -->
-  <path d="M 190 310 L 175 385" stroke="#94a3b8" stroke-width="12" stroke-linecap="round"/>
-  <path d="M 120 385 L 245 385" stroke="#94a3b8" stroke-width="14" stroke-linecap="round"/>
-
-  <!-- Live Alert / Recording Indicator -->
-  <circle cx="340" cy="145" r="18" fill="#ef4444"/>
-  <circle cx="340" cy="145" r="26" stroke="#ef4444" stroke-width="4" stroke-opacity="0.45"/>
+  <circle cx="120" cy="120" r="120" fill="url(#tgGrad)" />
+  <!-- Bottom under-fold -->
+  <path d="M 98 175 c -3.887 0 -3.227 -1.468 -4.568 -5.17 L 82 132.206 l 88.5 -52.206 Z" fill="#c8daea" />
+  <!-- Back fold -->
+  <path d="M 98 175 c 3 0 4.327 -1.373 6 -3 l 16 -15.558 l -19.958 -12.035 Z" fill="#a9cbe4" />
+  <!-- Main paper airplane body -->
+  <path d="M 100.04 144.41 l 48.36 35.729 c 5.519 3.045 9.51 1.468 10.887 -5.123 l 19.685 -92.763 c 2.015 -8.08 -3.08 -11.745 -8.35 -9.347 l -115.5 44.537 c -7.89 3.165 -7.843 7.567 -1.438 9.528 l 29.663 9.258 l 68.673 -43.325 c 3.242 -1.966 6.218 -0.91 3.775 1.258 Z" fill="#ffffff" />
 </svg>

@@ -13,12 +13,27 @@ export const AuthCallbackPage = () => {
     const finishSignIn = async () => {
       try {
         const params = new URLSearchParams(window.location.search);
-        const oauthError = params.get('error_description') || params.get('error');
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const oauthError =
+          params.get('error_description') ||
+          hashParams.get('error_description') ||
+          params.get('error') ||
+          hashParams.get('error');
         if (oauthError) {
           throw new Error(oauthError);
         }
 
-        const { data: currentSession, error: sessionError } = await supabase.auth.getSession();
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (setSessionError) throw setSessionError;
+        }
+
+        let { data: currentSession, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
         if (!currentSession.session) {
@@ -29,9 +44,18 @@ export const AuthCallbackPage = () => {
 
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) throw exchangeError;
+
+          const { data: exchangedSession, error: exchangedSessionError } = await supabase.auth.getSession();
+          if (exchangedSessionError) throw exchangedSessionError;
+          currentSession = exchangedSession;
+        }
+
+        if (!currentSession.session) {
+          throw new Error('Google sign-in completed, but no session was created.');
         }
 
         if (!cancelled) {
+          window.history.replaceState({}, document.title, '/auth/callback');
           navigate('/dashboard', { replace: true });
         }
       } catch (err: any) {

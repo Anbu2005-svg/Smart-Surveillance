@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>CCTV AI Surveillance - Command Center</title>
     <meta name="description" content="Real-time AI CCTV surveillance, fire, weapon, and intrusion detection command center." />
     
@@ -11,12 +11,16 @@
     <meta name="color-scheme" content="dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="CCTV AI" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-TileColor" content="#229ED9" />
+    <meta name="msapplication-TileImage" content="/icons/icon-192.png" />
     
     <!-- iOS Safari Meta -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CCTV AI" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     
     <!-- Favicon & Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -25,7 +29,7 @@
     <!-- Manifest -->
     <link rel="manifest" href="/manifest.webmanifest" />
   </head>
-  <body class="bg-[#071026] text-slate-100 overflow-x-hidden selection:bg-cyan-500 selection:text-slate-900">
+  <body class="bg-[#071026] text-slate-100 overflow-x-hidden selection:bg-cyan-500 selection:text-slate-900 touch-manipulation">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
